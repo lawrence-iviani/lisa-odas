@@ -215,14 +215,6 @@ target_link_libraries(odaslive
     odas
 )
 
-add_executable(matrix-odas
-    demo/matrix-demos/matrix-odas.cpp
-)
-target_link_libraries(matrix-odas
-    odas
-    ${JSON_C_LIBRARIES}
-    ${MATRIX_CREATOR_HAL}
-)
 
 #Add new DEMO based on matrix-odas
 add_executable(lisa-ODAS-receiver
