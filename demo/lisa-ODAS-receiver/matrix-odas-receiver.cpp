@@ -23,15 +23,15 @@ namespace hal = matrix_hal;
 // ENERGY_COUNT : Number of sound energy slots to maintain.
 #define ENERGY_COUNT 36
 // MAX_VALUE : controls smoothness
-#define MAX_VALUE 200
+#define MAX_VALUE 150
 // INCREMENT : controls sensitivity
 #define INCREMENT 20
 // DECREMENT : controls delay in the dimming
-#define DECREMENT 1
+#define DECREMENT 2
 // MIN_THRESHOLD: Filters out low energy
-#define MIN_THRESHOLD 10
+#define MIN_THRESHOLD 5
 // MAX_BRIGHTNESS: 0 - 255
-#define MAX_BRIGHTNESS 50
+#define MAX_BRIGHTNESS 220	
 // SLEEP IN SEC, 0.1s -> 100 ms, wating time before checking if a socket connection is available (accept return > 0)
 #define SLEEP_ACCEPT_LOOP 0.5
 // How many empty messges should be received before raising a timeout
@@ -45,9 +45,11 @@ namespace hal = matrix_hal;
 #define DEBUG_DOA 0
 #define DEBUG_JSON 0
 #define DEBUG_INCOME_MSG 0
-#define DEBUG_SSL 0
-#define DEBUG_SST 0
-
+#define DEBUG_DECODE 0
+#define DEBUG_DECODE 0
+// Debug options specific components
+#define PRINT_DETECTION 1 // In relation to message debug only items that have a non empty tag for SST messages
+#define PRINT_MIN_DETECTION_SSL_E 0.2
 
 /* -------------------------------------------------- */
 /* ---------- UTILITIES FOR DEBUG PRINTING ---------- */
@@ -67,13 +69,17 @@ namespace hal = matrix_hal;
 /* ------------------------------------------------------- */
 enum ODAS_data_source{SSL = 0, SST = 1}; // Lookup table to determine the index of the data source
 #define NUM_OF_ODAS_DATA_SOURCES 2 // Length of ODAS_data_source
-
-const unsigned int nBytes = 10240;
-int backlog = 1; 
-
 char const  *ODAS_data_source_str[NUM_OF_ODAS_DATA_SOURCES] = {"SSL", "SST"}; 
+// TO DEACTIVATE a specific income ODAS data, set to 0 the port in the relative position in port numbers
+// exampless: SSL only {9001, 0} , SST only {9000}. 
+// NOTE port numbers are defined in the relative ODAS .cfg file loaded at boot by ODAS server
+unsigned int port_numbers[NUM_OF_ODAS_DATA_SOURCES] = {9001, 9000}; 
+
+const unsigned int nBytes = 10240; // The max length of a message (assumning sizeof(char)=1)
+int backlog = 1; // The number of message in queue in a recv
+
 int servers_id[NUM_OF_ODAS_DATA_SOURCES] = {0, 0}; 
-unsigned int port_numbers[NUM_OF_ODAS_DATA_SOURCES] = {9001, 9000}; // SSL, SST
+
 struct sockaddr_in servers_address[NUM_OF_ODAS_DATA_SOURCES];
 int connections_id[NUM_OF_ODAS_DATA_SOURCES] = {0, 0}; 
 char *messages[NUM_OF_ODAS_DATA_SOURCES] = {NULL, NULL};
@@ -92,12 +98,13 @@ struct hal_leds_struct {
 struct led_energies_struct {
 	int energy_array_azimuth[ENERGY_COUNT]; // fi
 	int energy_array_elevation[ENERGY_COUNT]; //theta
+	int detect[ENERGY_COUNT]; //detection level (if present)
 };
 
 /* ----------------------------------------- */
 /* ---------- ODAS DATA STRUCTURE ---------- */
 /* ----------------------------------------- */
-/* example SSL
+/* ---- example SSL ----
 {
     "timeStamp": 41888,
     "src": [
@@ -118,7 +125,7 @@ struct SSL_struct {
 	unsigned int timestamp;
 }; // SSL struct message
 
-/* example SST
+/* ---- example SST ----
 {
     "timeStamp": 41887,
     "src": [
@@ -128,9 +135,10 @@ struct SSL_struct {
         { "id": 0, "tag": "", "x": 0.000, "y": 0.000, "z": 0.000, "activity": 0.000 }
     ]
 } */
+#define SST_TAG_LEN 20
 struct SST_src_struct {
 	unsigned int id;
-	char tag[20]; // TODO, VERIFY THIS IS NOT BUGGY, NO IDEA WHAT IS THE MAX LEN!!!
+	char tag[SST_TAG_LEN]; // TODO, VERIFY THIS IS NOT BUGGY, NO IDEA WHAT IS THE MAX LEN!!!
 	double x;
 	double y;
 	double z;
@@ -145,6 +153,7 @@ struct SST_struct {
 /* --------------------------------------------- */
 /* ---------- INTERNAL DATA STRUCTURE ---------- */
 /* --------------------------------------------- */
+static hal_leds_struct hw_led;
 static SSL_struct SSL_data;
 static SST_struct SST_data;
 static led_energies_struct led_energies;
@@ -152,6 +161,10 @@ static unsigned int json_array_id = 0; // a counter to inspect json_array and se
 static unsigned int json_msg_id = SSL; // Default value
 static int counter_no_data = MAX_EMPTY_MESSAGE; //counter for empty messages, used for timeout
 
+
+/* ------------------------------- */
+/* ---------- FUNCTIONS ---------- */
+/* ------------------------------- */
 char* message2str(int odas_id, char msg[]) {
 	msg[0] = '\0';
 	if (odas_id==SSL) {
@@ -193,46 +206,106 @@ const double led_angles_mvoice[18] = {170, 150, 130, 110, 90,  70,
                                       50,  30,  10,  350, 330, 310,
                                       290, 270, 250, 230, 210, 190};
 
-void increase_pots() {
+// POTS (LED) SECTION
+void increase_pot(int id_pot) {
   // https://en.wikipedia.org/wiki/Spherical_coordinate_system#Coordinate_system_conversions
   // Convert x,y to angle. TODO: See why x axis from ODAS is inverted... ????
   double x, y, z, E; 
-  x = SSL_data.src[json_array_id].x;
-  y = SSL_data.src[json_array_id].y;
-  z = SSL_data.src[json_array_id].z;
-  E = SSL_data.src[json_array_id].E;
+  x = SSL_data.src[id_pot].x;
+  y = SSL_data.src[id_pot].y;
+  z = SSL_data.src[id_pot].z;
+  E = SSL_data.src[id_pot].E;
   
- // debug_print(DEBUG_DOA, "[ts: %d] Computing for Object@(0x%X) SSL_DATA[%d] (x=%f,y=%f,z=%f,E=%f)", SSL_data.timestamp, &SSL_data, json_array_id, x,y,z,E);
-  // TODO: timestamp for some reason break the object and the 
-  debug_print(DEBUG_DOA, "[ts: %d] Object (0x%X)SSL_DATA.src[%d] (x=%f,y=%f,z=%f,E=%f)",SSL_data.timestamp, &SSL_data,json_array_id, x,y,z,E);
+  double t_x, t_y, t_z, t_act; 
+  t_x = SST_data.src[id_pot].x;
+  t_y = SST_data.src[id_pot].y;
+  t_z = SST_data.src[id_pot].z;
+  t_act = SST_data.src[id_pot].activity;
+  
+  // only for debug purpose
+  char* tag;
+  tag = SST_data.src[id_pot].tag;
  
   double angle_fi = fmodf((atan2(y, x) * (180.0 / M_PI)) + 360, 360);
   double angle_theta = 90.0 - fmodf((atan2(sqrt(y*y+x*x), z) * (180.0 / M_PI)) + 180, 180);
+  double angle_fi_t = fmodf((atan2(t_y, t_x) * (180.0 / M_PI)) + 360, 360);
+  
   // Convert angle to index
   int i_angle_fi = angle_fi / 360 * ENERGY_COUNT;  // convert degrees to index
   int i_angle_proj_theta = angle_theta / 180 * ENERGY_COUNT;  // convert degrees to index
+  int i_angle_fi_t = angle_fi_t / 360 * ENERGY_COUNT;  // convert degrees to index
   
-  // Set energy for this angle, azimuth fi
-  led_energies.energy_array_azimuth[i_angle_fi] += INCREMENT * E * cos(angle_theta * M_PI / 180.0 );
-  led_energies.energy_array_elevation[i_angle_fi] += INCREMENT * E * sin(angle_theta * M_PI / 180.0);
-  
-  // Set energy for this angle, angle_theta theta
-  debug_print(DEBUG_DOA, "angle_fi=%f energy_array_azimuth=%d--- i_angle_proj_theta=%f --- energy_array_elevation=%d\n", angle_fi, led_energies.energy_array_azimuth[i_angle_fi], angle_theta, led_energies.energy_array_elevation[i_angle_proj_theta] );
-    
-  // Set limit at MAX_VALUE
+  // Set energies for  azimuth fi and theta
+  led_energies.energy_array_azimuth[i_angle_fi] += INCREMENT * E * cos(angle_theta * M_PI / 180.0 ); // sin split the increment the projection of E on XY plane (the plane of the circular array)
+  led_energies.energy_array_elevation[i_angle_fi] += INCREMENT * E * sin(angle_theta * M_PI / 180.0); // cos split the increment the projection of fi  on XZ plane (looking at the top of the array)
+  led_energies.detect[i_angle_fi_t] += INCREMENT * t_act;
+
+  // limit at MAX_VALUE
   led_energies.energy_array_azimuth[i_angle_fi] =
       led_energies.energy_array_azimuth[i_angle_fi] > MAX_VALUE ? MAX_VALUE : led_energies.energy_array_azimuth[i_angle_fi];
   led_energies.energy_array_elevation[i_angle_proj_theta] =
       led_energies.energy_array_elevation[i_angle_proj_theta] > MAX_VALUE ? MAX_VALUE : led_energies.energy_array_elevation[i_angle_proj_theta];
+  led_energies.detect[i_angle_fi_t] =
+      led_energies.detect[i_angle_fi_t] > MAX_VALUE ? MAX_VALUE : led_energies.detect[i_angle_fi_t];
+
+  // Debug section
+  debug_print(DEBUG_DOA, "[ts: %d] Object (0x%X)SSL_DATA.src[%d]\t\t(x=%f\ty=%f\tz=%f\tE=%f\n)",SSL_data.timestamp, &SSL_data,id_pot, x,y,z,E);
+  debug_print(DEBUG_DOA, "SSL angle_fi=%f energy_array_azimuth=%d--- i_angle_proj_theta=%f --- energy_array_elevation=%d\n", angle_fi, led_energies.energy_array_azimuth[i_angle_fi], angle_theta, led_energies.energy_array_elevation[i_angle_proj_theta] );
+  debug_print(DEBUG_DOA, "[ts: %d] Object (0x%X)SST_DATA.src[%d]\t%s\t(x=%f\ty=%f\tz=%f\tactivity=%f\n)",SST_data.timestamp, &SST_data,id_pot, tag, t_x,t_y,t_z,t_act);
+  debug_print(DEBUG_DOA, "SST angle_fi=%f detect=%d\n", angle_fi_t, led_energies.detect[i_angle_fi_t]);
+    
+  if (PRINT_DETECTION and strlen(tag)>0) {
+	  printf("[ts: %d] SST ODAS_Channel[%d]\t%s\tactivity=%f\t(x=%f\ty=%f\tz=%f\t)",SST_data.timestamp, id_pot, tag,t_act, t_x,t_y,t_z);
+	  printf("angle_fi=%f\tdetect=%d\n", angle_fi_t, led_energies.detect[i_angle_fi_t]);
+  }
+  if (E>PRINT_MIN_DETECTION_SSL_E) {
+	  printf("[ts: %d] SSL ODAS_Channel[%d]\tE=%f\t(x=%f\ty=%f\tz=%f\tactivity=%f\tangle_fi=%f\t)",SSL_data.timestamp, id_pot, E, x,y,z,angle_fi_t);
+	  printf("angle_fi=%f\tenergy_array_azimuth=%d\ti_angle_proj_theta=%f\tenergy_array_elevation=%d\n", angle_fi, led_energies.energy_array_azimuth[i_angle_fi], angle_theta, led_energies.energy_array_elevation[i_angle_proj_theta] );
+  }
+  
 }
 
 void decrease_pots() {
   for (int i = 0; i < ENERGY_COUNT; i++) {
     led_energies.energy_array_azimuth[i] -= (led_energies.energy_array_azimuth[i] > 0) ? DECREMENT : 0;
 	led_energies.energy_array_elevation[i] -= (led_energies.energy_array_elevation[i] > 0) ? DECREMENT : 0;
+	led_energies.detect[i] -= (led_energies.detect[i] > 0) ? DECREMENT : 0;
   }
 }
 
+void set_all_pots() {
+	decrease_pots();
+	for (int c = 0 ; c < MAX_ODAS_SOURCES; c++) {	
+		increase_pot(c);
+	}
+
+    for (int i = 0; i < hw_led.bus.MatrixLeds(); i++) {
+      // led index to angle
+      int led_angle = hw_led.bus.MatrixName() == hal::kMatrixCreator
+                          ? leds_angle_mcreator[i]
+                          : led_angles_mvoice[i];
+      // Convert from angle to pots index
+      int index_pots = led_angle * ENERGY_COUNT / 360;
+      // Mapping from pots values to color
+      int color_azimuth = led_energies.energy_array_azimuth[index_pots] * MAX_BRIGHTNESS / MAX_VALUE;
+	  int color_elevation = led_energies.energy_array_elevation[index_pots] * MAX_BRIGHTNESS / MAX_VALUE;
+	  int color_tracking = led_energies.detect[index_pots] * MAX_BRIGHTNESS / MAX_VALUE;
+	  
+      // Removing colors below the threshold
+      color_azimuth = (color_azimuth < MIN_THRESHOLD) ? 0 : color_azimuth;
+	  color_elevation = (color_elevation < MIN_THRESHOLD) ? 0 : color_elevation;
+	  color_tracking = (color_tracking < MIN_THRESHOLD) ? 0 : color_tracking;
+	  //debug_print(DEBUG_DOA,"led_angle=%d, index_pots=%d, color_azimuth=%d, color_elevation=%d color_tracking=%d\n", led_angle,index_pots,color_azimuth, color_elevation, color_tracking ); 
+	
+      hw_led.image1d.leds[i].red = color_tracking;
+      hw_led.image1d.leds[i].green = color_elevation;
+      hw_led.image1d.leds[i].blue = color_azimuth;
+      hw_led.image1d.leds[i].white = 0;
+    }
+    hw_led.everloop.Write(&hw_led.image1d);
+}
+
+// JSON PARSER AND DECODING SECTION
 void json_parse_array(json_object *jobj, char *key) {
   // Forward Declaration
   void json_parse(json_object * jobj);
@@ -260,13 +333,8 @@ void json_parse_array(json_object *jobj, char *key) {
 	  if (json_array_id>=MAX_ODAS_SOURCES) {
 		  fprintf(stderr,"ODAS array too big, discarding json object %d\n",json_array_id);
 	  } else {
-		  // TODO: should be moved out all this stuff in a specific call??? These are calls specifc for LEDs handling
-		  if (json_msg_id ==SSL) {
-			  decrease_pots();
-		  }
 		  debug_print(DEBUG_JSON, "Processing JSON array obj item: %d ", json_array_id);
 		  json_parse(jvalue);
-		  increase_pots();
 	  }
 	  json_array_id++;
     }
@@ -276,10 +344,6 @@ void json_parse_array(json_object *jobj, char *key) {
 void json_parse(json_object *jobj) {
   enum json_type type;
   unsigned int count = 0;
-  
-  /* if (json_msg_id ==SSL) {
-			  decrease_pots();
-		  } */
   
   json_object_object_foreach(jobj, key, val) {
     type = json_object_get_type(val);
@@ -301,7 +365,6 @@ void json_parse(json_object *jobj) {
 			  SSL_data.src[json_array_id].E = json_object_get_double(val);
 			  if(DEBUG_JSON) {printf("(0x%X)SSL_data.src[%d].E=%f\n", &SSL_data, json_array_id, SSL_data.src[json_array_id].E);}
 			}
-//			increase_pots();
 		} else if (json_msg_id ==SST) {
 			if (!strcmp(key, "x")) {
 			  SST_data.src[json_array_id].x = json_object_get_double(val);
@@ -313,7 +376,6 @@ void json_parse(json_object *jobj) {
 			  SST_data.src[json_array_id].activity = json_object_get_double(val);
 			} 
 		}
-        
         count++;
         break;
       case json_type_int:
@@ -335,10 +397,9 @@ void json_parse(json_object *jobj) {
 			
 		} else if (json_msg_id ==SST) {
 			if (!strcmp(key, "tag")) {
-				// ASSUMING MAX LENGTH IS 20 BUGGY!!!
-				strncpy(SST_data.src[json_array_id].tag, json_object_get_string(val), 20);
+				strncpy(SST_data.src[json_array_id].tag, json_object_get_string(val), SST_TAG_LEN);
 				//printf("%s vs %s \n",SST_data.src[json_array_id].tag, json_object_get_string(val));
-				SST_data.src[json_array_id].tag[20] = '\0';
+				SST_data.src[json_array_id].tag[SST_TAG_LEN] = '\0';
 			}
 		}
         break;
@@ -357,6 +418,7 @@ void json_parse(json_object *jobj) {
   }
 }
 
+// CONNECTION SECTION
 int init_connection(sockaddr_in &server_address, int port_number, int backlog) {
 	/*Init a non blocking connection and return the socket ID*/
 	int server_id = 0;
@@ -411,70 +473,29 @@ bool reception_terminate() {
 	return false;
 }
 
-void set_led_sst(hal_leds_struct &hw_led, char * message_sst) {
+//DECODE ODAS MESSAGE
+void decode_message(hal_leds_struct &hw_led, unsigned int msg_type, char * odas_json_msg) {
 	// at start up there can be some message in queue, this can bring to the second message to be bad formatted
 	// This creates a segfault
-	json_object *jobj = json_tokener_parse(message_sst);
-	if (message_sst[0]!='{') {
-		fprintf(stderr, "set_led_sst: Ignoring message, wrong opening character	  ->%c<-}", message_sst[0]);
+	if (odas_json_msg[0]!='{') {
+		fprintf(stderr, "decode_message: Ignoring message %s, wrong opening character  ->%c<-,  }", ODAS_data_source_str[msg_type], odas_json_msg[0]);
 		return;
 	}
-	json_msg_id = SST; // Define which object should be saved
+	json_object *jobj = json_tokener_parse(odas_json_msg);
+	json_msg_id = msg_type; // Define which object should be saved
     json_parse(jobj);
 	
 	// Only needed if debugging
-	if (DEBUG_SST) {
+	if (DEBUG_DECODE) {
 		char msg[1024];
-		debug_print(DEBUG_SST, "GENERATED %s ",message2str(SST, msg));
+		debug_print(DEBUG_DECODE, "Decoded Message:\n%s ",message2str(msg_type, msg));
 	}
-}
-
-void set_led_ssl(hal_leds_struct &hw_led, char * message_ssl) {
-	// at start up there can be some message in queue, this can bring to the second message to be bad formatted
-	// This creates a segfault
-	json_object *jobj = json_tokener_parse(message_ssl);
-	if (message_ssl[0]!='{') {
-		fprintf(stderr, "set_led_ssl: Ignoring message, wrong opening character	  ->%c<-}", message_ssl[0]);
-		return;
-	}
-	json_msg_id = SSL; // Define which object should be saved
-    json_parse(jobj);
-	
-	// Only needed if debugging
-	if (DEBUG_SSL) {
-		char msg[1024];
-		debug_print(DEBUG_SSL, "GENERATED %s ",message2str(SSL, msg));
-	}
-
-    for (int i = 0; i < hw_led.bus.MatrixLeds(); i++) {
-      // led index to angle
-      int led_angle = hw_led.bus.MatrixName() == hal::kMatrixCreator
-                          ? leds_angle_mcreator[i]
-                          : led_angles_mvoice[i];
-      // Convert from angle to pots index
-      int index_pots = led_angle * ENERGY_COUNT / 360;
-      // Mapping from pots values to color
-      int color_azimuth = led_energies.energy_array_azimuth[index_pots] * MAX_BRIGHTNESS / MAX_VALUE;
-	  int color_elevation = led_energies.energy_array_elevation[index_pots] * MAX_BRIGHTNESS / MAX_VALUE;
-	  
-      // Removing colors below the threshold
-      color_azimuth = (color_azimuth < MIN_THRESHOLD) ? 0 : color_azimuth;
-	  color_elevation = (color_elevation < MIN_THRESHOLD) ? 0 : color_elevation;
-	  //debug_print(DEBUG_SSL,"led_angle=%d, index_pots=%d, color_azimuth=%d, color_elevation=%d\n", led_angle,index_pots,color_azimuth, color_elevation ); 
-	
-      hw_led.image1d.leds[i].red = 0;
-      hw_led.image1d.leds[i].green = color_elevation;
-      hw_led.image1d.leds[i].blue = color_azimuth;
-      hw_led.image1d.leds[i].white = 0;
-    }
-    hw_led.everloop.Write(&hw_led.image1d);
-}
+}	
 
 int main(int argc, char *argv[]) {
   int c; // a counter for cycles for 
   
   // Everloop Initialization
-  hal_leds_struct hw_led;
   if (!hw_led.bus.Init()) return false;
   hw_led.image1d = hal::EverloopImage(hw_led.bus.MatrixLeds());
   hw_led.everloop.Setup(&hw_led.bus);
@@ -488,7 +509,6 @@ int main(int argc, char *argv[]) {
   }
   hw_led.everloop.Write(&hw_led.image1d);
 
-  
 // INIT MESSAGES
   printf("(0x%X)SSL_data and (0x%X)SST_data", &SSL_data, &SST_data);
   printf("Init messages ");
@@ -544,24 +564,26 @@ int main(int argc, char *argv[]) {
 	  // Separator to print only when debugging but not with the debug formatting	  
 	  if (DEBUG_INCOME_MSG) { printf("---------------------------------\nSTART RECEPTION: %d\n---------------------------------\n", n_cycles);}
 	  for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
-	    memset(messages[c], '\0', sizeof(char) * nBytes); // Reset before using, fill the message of NULLs
+		if (!port_numbers[c]) {
+			// skip if 0, port not selected -> service not in use
+			continue;
+		}
+	    memset(messages[c], '\0', sizeof(char) * nBytes); // Reset before using, fill the message of NULLs (reset and possible previous values from previous iteraction)
 		messages_size[c] = port_numbers[c] ? recv(connections_id[c] , messages[c], nBytes, 0): 0; // Received the message, if available
 		if (messages_size[c]) {
 			messages[c][messages_size[c]] = 0x00; 
 			debug_print(DEBUG_INCOME_MSG, "RECEIVED message %s: len=%d - \n||%s||\n", ODAS_data_source_str[c], messages_size[c], messages[c]);
-			if (ODAS_data_source_str[c]=="SSL") {
-				set_led_ssl(hw_led, messages[c]);
-			} else if (ODAS_data_source_str[c]=="SST") {
-				set_led_sst(hw_led, messages[c]);
-			} else {
-				fprintf(stderr, "Unknown message type %s\n", ODAS_data_source_str[c]);
-			}
+			// accordingly to enum ODAS_data_source, 0 SSL, 1 SST, ...
+			// Decode an incoming message and store in the proper C structure
+			decode_message(hw_led, c, messages[c]);
 		} else {
-			debug_print(DEBUG_INCOME_MSG, "returned messages_size for %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
+			debug_print(DEBUG_INCOME_MSG, "returned 0 len for %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
 		}
 		if (DEBUG_INCOME_MSG) { printf("END RECEPTION message %s: len=%d\n+-+-+-+-+-+-+-+-+-+-\n", ODAS_data_source_str[c], messages_size[c]); }
 		fflush(stdout);
 	  }
+	  // Finally, set all the pots
+	  set_all_pots();
 	  if (DEBUG_INCOME_MSG) { printf("---------------------------------\nEND RECEPTION: %d\n---------------------------------\n\n", n_cycles);}
 	  n_cycles++;
    }
