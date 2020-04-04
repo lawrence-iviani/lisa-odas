@@ -14,8 +14,11 @@
 #include <errno.h>
 #include <fcntl.h> /* Added for the nonblocking socket */
 #include <unistd.h> /*usleep */
+#include <sys/ioctl.h> // FIONREAD
+#include <stdio.h>  // fopen & c
 
 namespace hal = matrix_hal;
+
 
 /* -------------------------------------------------------------- */
 /* ---------- GENERAL CONFIGURATION, LEDs, CONNECTION  ---------- */
@@ -36,9 +39,21 @@ namespace hal = matrix_hal;
 #define SLEEP_ACCEPT_LOOP 0.5
 // How many empty messges should be received before raising a timeout
 #define MAX_EMPTY_MESSAGE 200
-
+//In a recv call, how many buffers of PCM data should i acquire. 
+// Provide a balance between CPU usage (less buffers, higher CPU) and Latency (less buffers, lower latency) (TODO: find balance)
+#define RECV_PCM_BUFFERS 4
 // This must be the same parameters as in defined in configuration ssl.nPots
 #define MAX_ODAS_SOURCES 4
+// Use for dumping received RAW files to PCM
+#define DUMP_PCM 0
+
+
+// Raw wave data stream
+// as defined in SSS module in configuration sss.separated|postfiltered
+#define SSS_SAMPLERATE 16000
+#define SSS_HOPSIZE 128
+#define SSS_BITS 16
+#define SSS_GAIN 10.0  // Used only in postfiltered. TODO: Verify the effect
 
 // Activate for debug different components
 #define DEBUG_CONNECTION 0
@@ -47,9 +62,12 @@ namespace hal = matrix_hal;
 #define DEBUG_INCOME_MSG 0
 #define DEBUG_DECODE 0
 #define DEBUG_DECODE 0
+#define DEBUG_DUMP_FILES 0
+
 // Debug options specific components
 #define PRINT_DETECTION 1 // In relation to message debug only items that have a non empty tag for SST messages
 #define PRINT_MIN_DETECTION_SSL_E 0.2
+
 
 /* -------------------------------------------------- */
 /* ---------- UTILITIES FOR DEBUG PRINTING ---------- */
@@ -67,24 +85,32 @@ namespace hal = matrix_hal;
 /* ------------------------------------------------------- */
 /* ---------- CONNECTION CONSTANT AND STRUCTURE ---------- */
 /* ------------------------------------------------------- */
-enum ODAS_data_source{SSL = 0, SST = 1}; // Lookup table to determine the index of the data source
-#define NUM_OF_ODAS_DATA_SOURCES 2 // Length of ODAS_data_source
-char const  *ODAS_data_source_str[NUM_OF_ODAS_DATA_SOURCES] = {"SSL", "SST"}; 
+// Lookup table to determine the index of the data source
+// SSL: Sound Source localization
+// SST: Sound Source tracking
+// SSS_S: Sound Source stream(??) Separated (TODO: check SSS what does it mean)
+// SSS_P: Sound Source stream(??) Postfiltered TODO!
+enum ODAS_data_source{SSL = 0, SST = 1, SSS_S = 2, SSS_P = 3}; 
+#define NUM_OF_ODAS_DATA_SOURCES 4 // Length of ODAS_data_source
+char const  *ODAS_data_source_str[NUM_OF_ODAS_DATA_SOURCES] = {"SSL", "SST", "SSS_S", "SSS_P"}; 
 // TO DEACTIVATE a specific income ODAS data, set to 0 the port in the relative position in port numbers
 // exampless: SSL only {9001, 0} , SST only {9000}. 
 // NOTE port numbers are defined in the relative ODAS .cfg file loaded at boot by ODAS server
-unsigned int port_numbers[NUM_OF_ODAS_DATA_SOURCES] = {9001, 9000}; 
+const unsigned int port_numbers[NUM_OF_ODAS_DATA_SOURCES] = {9001, 9000, 10000, 10010};//10000}; 
+const unsigned int n_bytes_raw_msg = (unsigned int)RECV_PCM_BUFFERS*SSS_HOPSIZE*MAX_ODAS_SOURCES*SSS_BITS/8;
+const unsigned int n_bytes_json_msg = 10240; // untouched from the matrix example
+const unsigned int n_bytes_msg[NUM_OF_ODAS_DATA_SOURCES] = {n_bytes_json_msg, n_bytes_json_msg, n_bytes_raw_msg, n_bytes_raw_msg }; // The max length of a message (assumning sizeof(char)=1), For SSS this is interpreted as the min block, if more data are available they are received as multiple of this number
 
-const unsigned int nBytes = 10240; // The max length of a message (assumning sizeof(char)=1)
-int backlog = 1; // The number of message in queue in a recv
+const int backlog = 1; // The number of message in queue in a recv
 
-int servers_id[NUM_OF_ODAS_DATA_SOURCES] = {0, 0}; 
+int servers_id[NUM_OF_ODAS_DATA_SOURCES] = {0, 0, 0, 0}; 
 
 struct sockaddr_in servers_address[NUM_OF_ODAS_DATA_SOURCES];
-int connections_id[NUM_OF_ODAS_DATA_SOURCES] = {0, 0}; 
-char *messages[NUM_OF_ODAS_DATA_SOURCES] = {NULL, NULL};
-int messages_size[NUM_OF_ODAS_DATA_SOURCES] = {0, 0}; 
-
+int connections_id[NUM_OF_ODAS_DATA_SOURCES] = {0, 0, 0, 0}; 
+char *messages[NUM_OF_ODAS_DATA_SOURCES] = {NULL, NULL, NULL, NULL};
+unsigned int messages_size[NUM_OF_ODAS_DATA_SOURCES] = {0, 0, 0, 0}; 
+FILE *dump_outfile_fd[NUM_OF_ODAS_DATA_SOURCES] = {NULL, NULL, NULL, NULL};
+const char	*dump_outfile_name[NUM_OF_ODAS_DATA_SOURCES] = {"","", "separated.pcm", "postfiltered.pcm"} ;
 
 /* --------------------------------------- */
 /* ---------- HW LED  STRUCTURE ---------- */
@@ -100,6 +126,7 @@ struct led_energies_struct {
 	int energy_array_elevation[ENERGY_COUNT]; //theta
 	int detect[ENERGY_COUNT]; //detection level (if present)
 };
+
 
 /* ----------------------------------------- */
 /* ---------- ODAS DATA STRUCTURE ---------- */
@@ -160,6 +187,14 @@ static led_energies_struct led_energies;
 static unsigned int json_array_id = 0; // a counter to inspect json_array and set value in the proper src structure , not elegant but functional
 static unsigned int json_msg_id = SSL; // Default value
 static int counter_no_data = MAX_EMPTY_MESSAGE; //counter for empty messages, used for timeout
+const double leds_angle_mcreator[35] = {
+    170, 159, 149, 139, 129, 118, 108, 98,  87,  77,  67,  57,
+    46,  36,  26,  15,  5,   355, 345, 334, 324, 314, 303, 293,
+    283, 273, 262, 252, 242, 231, 221, 211, 201, 190, 180};
+
+const double led_angles_mvoice[18] = {170, 150, 130, 110, 90,  70,
+                                      50,  30,  10,  350, 330, 310,
+                                      290, 270, 250, 230, 210, 190};
 
 
 /* ------------------------------- */
@@ -197,15 +232,6 @@ char* message2str(int odas_id, char msg[]) {
 	return msg;
 }
 
-const double leds_angle_mcreator[35] = {
-    170, 159, 149, 139, 129, 118, 108, 98,  87,  77,  67,  57,
-    46,  36,  26,  15,  5,   355, 345, 334, 324, 314, 303, 293,
-    283, 273, 262, 252, 242, 231, 221, 211, 201, 190, 180};
-
-const double led_angles_mvoice[18] = {170, 150, 130, 110, 90,  70,
-                                      50,  30,  10,  350, 330, 310,
-                                      290, 270, 250, 230, 210, 190};
-
 // POTS (LED) SECTION
 void increase_pot(int id_pot) {
   // https://en.wikipedia.org/wiki/Spherical_coordinate_system#Coordinate_system_conversions
@@ -237,7 +263,7 @@ void increase_pot(int id_pot) {
   
   // Set energies for  azimuth fi and theta
   led_energies.energy_array_azimuth[i_angle_fi] += INCREMENT * E * cos(angle_theta * M_PI / 180.0 ); // sin split the increment the projection of E on XY plane (the plane of the circular array)
-  led_energies.energy_array_elevation[i_angle_fi] += INCREMENT * E * sin(angle_theta * M_PI / 180.0); // cos split the increment the projection of fi  on XZ plane (looking at the top of the array)
+  led_energies.energy_array_elevation[i_angle_proj_theta] += INCREMENT * E * sin(angle_theta * M_PI / 180.0); // cos split the increment the projection of fi  on XZ plane (looking at the top of the array)
   led_energies.detect[i_angle_fi_t] += INCREMENT * t_act;
 
   // limit at MAX_VALUE
@@ -255,12 +281,12 @@ void increase_pot(int id_pot) {
   debug_print(DEBUG_DOA, "SST angle_fi=%f detect=%d\n", angle_fi_t, led_energies.detect[i_angle_fi_t]);
     
   if (PRINT_DETECTION and strlen(tag)>0) {
-	  printf("[ts: %d] SST ODAS_Channel[%d]\t%s\tactivity=%f\t(x=%f\ty=%f\tz=%f\t)",SST_data.timestamp, id_pot, tag,t_act, t_x,t_y,t_z);
-	  printf("angle_fi=%f\tdetect=%d\n", angle_fi_t, led_energies.detect[i_angle_fi_t]);
+	  printf("[ts: %d] SST ODAS_Channel[%d]\t%s\tactivity=%f\t(x=%f\ty=%f\tz=%f",SST_data.timestamp, id_pot, tag,t_act, t_x,t_y,t_z);
+	  printf("\tangle_fi=%f\tdetect=%d\n", angle_fi_t, led_energies.detect[i_angle_fi_t]);
   }
-  if (E>PRINT_MIN_DETECTION_SSL_E) {
-	  printf("[ts: %d] SSL ODAS_Channel[%d]\tE=%f\t(x=%f\ty=%f\tz=%f\tactivity=%f\tangle_fi=%f\t)",SSL_data.timestamp, id_pot, E, x,y,z,angle_fi_t);
-	  printf("angle_fi=%f\tenergy_array_azimuth=%d\ti_angle_proj_theta=%f\tenergy_array_elevation=%d\n", angle_fi, led_energies.energy_array_azimuth[i_angle_fi], angle_theta, led_energies.energy_array_elevation[i_angle_proj_theta] );
+  if (PRINT_DETECTION and E>PRINT_MIN_DETECTION_SSL_E) {
+	  printf("[ts: %d] SSL ODAS_Channel[%d]\tE=%f\t(x=%f\ty=%f\tz=%f\tangle_fi=%f)",SSL_data.timestamp, id_pot, E, x,y,z,angle_fi_t);
+	  printf("\tangle_fi=%f\tenergy_azimuth=%d\tangle_proj_theta=%f\tenergy_elevation=%d\n", angle_fi, led_energies.energy_array_azimuth[i_angle_fi], angle_theta, led_energies.energy_array_elevation[i_angle_proj_theta] );
   }
   
 }
@@ -443,7 +469,7 @@ int accept_connection(int server_id) {
 		  debug_print(DEBUG_CONNECTION, "server %d, no data (retry again) - %s",server_id, strerror(errno));
 		} else {
 		  fprintf(stderr,"accepting connection %d, error errno=%d - %s",server_id, errno, strerror(errno));
-		  exit(-1);
+		  exit(-2);
 		}
 	} else {
 		debug_print(DEBUG_CONNECTION, " [Connected] id=%d\n", connection_id);
@@ -477,6 +503,7 @@ bool reception_terminate() {
 void decode_message(hal_leds_struct &hw_led, unsigned int msg_type, char * odas_json_msg) {
 	// at start up there can be some message in queue, this can bring to the second message to be bad formatted
 	// This creates a segfault
+	debug_print(DEBUG_DECODE, "Decoding Message:\n%s\n",odas_json_msg);
 	if (odas_json_msg[0]!='{') {
 		fprintf(stderr, "decode_message: Ignoring message %s, wrong opening character  ->%c<-,  }", ODAS_data_source_str[msg_type], odas_json_msg[0]);
 		return;
@@ -488,19 +515,35 @@ void decode_message(hal_leds_struct &hw_led, unsigned int msg_type, char * odas_
 	// Only needed if debugging
 	if (DEBUG_DECODE) {
 		char msg[1024];
-		debug_print(DEBUG_DECODE, "Decoded Message:\n%s ",message2str(msg_type, msg));
+		debug_print(DEBUG_DECODE, "Decoded Message:\n%s\n",message2str(msg_type, msg));
 	}
 }	
+
+void decode_audio_stream_raw(FILE* outfile, char* odas_stream_msg, int message_len) {
+	unsigned int n_bytes_sample_inmsg = (unsigned int) SSS_BITS/8; 
+	unsigned int n_bytes_frame_inmsg = n_bytes_sample_inmsg*MAX_ODAS_SOURCES; 
+	//unsigned int n_samples = message_len/n_bytes_frame_inmsg;
+	//In this context a frame is collection of all the bytes, related to one sample for all channels
+	// In other word 4 channels, INT_16 bit -> 8 bytes, 4 channels FLOAT 32 bit -> 16 bytes
+	unsigned int n_frames_inmsg = message_len/n_bytes_frame_inmsg; // BETTER NAME?? frames or samples??
+	
+	if (message_len % n_frames_inmsg != 0) {
+		printf("Received a non well formatted raw message... TODO!!!!!!!!!!!!!!!!!!!!!!");
+		// TODO: should I limit the message len to skip the last frames. But this sounds not nessary, granted by the recv
+	}
+	debug_print(DEBUG_DUMP_FILES, "Writing %d bytes in %d frames of len=%d (word is %d) ---> fd=%d\n%", message_len, n_frames_inmsg, n_bytes_frame_inmsg, n_bytes_sample_inmsg, outfile);	
+	fwrite(odas_stream_msg, sizeof(char), message_len, outfile);
+}
 
 int main(int argc, char *argv[]) {
   int c; // a counter for cycles for 
   
-  // Everloop Initialization
+// Everloop Initialization
   if (!hw_led.bus.Init()) return false;
   hw_led.image1d = hal::EverloopImage(hw_led.bus.MatrixLeds());
   hw_led.everloop.Setup(&hw_led.bus);
 
-  // Clear all LEDs
+// Clear all LEDs
   for (hal::LedValue &led : hw_led.image1d.leds) {
     led.red = 0;
     led.green = 0;
@@ -513,13 +556,29 @@ int main(int argc, char *argv[]) {
   printf("(0x%X)SSL_data and (0x%X)SST_data", &SSL_data, &SST_data);
   printf("Init messages ");
   for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
-    messages[c] = (char *)malloc(sizeof(char) * nBytes);
-	memset(messages[c], '\0', sizeof(char) * nBytes);
+    messages[c] = (char *)malloc(sizeof(char) * n_bytes_msg[c]);
+	memset(messages[c], '\0', sizeof(char) * n_bytes_msg[c]);
 	messages_size[c] = strlen(messages[c]);
-	printf(" ...  %s(len=%d,nBytes=%d)", ODAS_data_source_str[c], messages_size[c], nBytes);
+	printf(" ...  %s(len=%d,nBytes=%d)", ODAS_data_source_str[c], messages_size[c], n_bytes_msg[c]);
   }
-  printf("[OK]\n");
+  printf(" [OK]\n");
   fflush(stdout);
+
+// DUMP FILES
+  if (DUMP_PCM) {  
+	  printf(" Init output file(s)");
+	  for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
+			if (c==SSS_S or c == SSS_P) {
+				dump_outfile_fd[c] = fopen (dump_outfile_name[c], "wb");
+				printf(" ... for %s Open file %s fd = %d", ODAS_data_source_str[c],dump_outfile_name[c], dump_outfile_fd[c]);
+				if (dump_outfile_fd[c]==NULL){
+					printf("Fail opening file %s", dump_outfile_name[c]);
+					exit(-1);
+				}
+			}
+	  }
+	  printf(" [OK]\n");
+  }
 
 // INIT CONNECTIONS
   printf(" Init listening");
@@ -532,7 +591,7 @@ int main(int argc, char *argv[]) {
   }
   printf(" [OK]\n");
   fflush(stdout);
-
+  
 // ACCEPT CONNECTIONS
   printf(" Waiting For Connections\n ");
   bool services_connected = false;
@@ -559,6 +618,7 @@ int main(int argc, char *argv[]) {
 
 // RECEIVING DATA
   printf("Receiving data........... \n");
+  int bytes_available;
   unsigned long n_cycles = 1; // Just a counter
   while (!reception_terminate()) { 
 	  // Separator to print only when debugging but not with the debug formatting	  
@@ -568,14 +628,26 @@ int main(int argc, char *argv[]) {
 			// skip if 0, port not selected -> service not in use
 			continue;
 		}
-	    memset(messages[c], '\0', sizeof(char) * nBytes); // Reset before using, fill the message of NULLs (reset and possible previous values from previous iteraction)
-		messages_size[c] = port_numbers[c] ? recv(connections_id[c] , messages[c], nBytes, 0): 0; // Received the message, if available
+	    memset(messages[c], '\0', sizeof(char) * n_bytes_msg[c]); // Reset before using, fill the message of NULLs (reset and possible previous values from previous iteraction)
+		ioctl(connections_id[c] ,FIONREAD,&bytes_available);
+		messages_size[c] = port_numbers[c] ? recv(connections_id[c] , messages[c], n_bytes_msg[c], 0): 0; // Received the message, if available
+		//messages_size[c] = port_numbers[c] ? recv(connections_id[c] , messages[c], n_bytes_msg[c], MSG_DONTWAIT ): 0; // Received the message, if available
+		debug_print(DEBUG_INCOME_MSG, "[Count %d] RECEIVED stream message %s: len=%d - bytes_available(before recv)=%d, ratio %f\n",n_cycles,  ODAS_data_source_str[c], messages_size[c], bytes_available, (float)bytes_available/n_bytes_msg[c]);
 		if (messages_size[c]) {
-			messages[c][messages_size[c]] = 0x00; 
-			debug_print(DEBUG_INCOME_MSG, "RECEIVED message %s: len=%d - \n||%s||\n", ODAS_data_source_str[c], messages_size[c], messages[c]);
 			// accordingly to enum ODAS_data_source, 0 SSL, 1 SST, ...
 			// Decode an incoming message and store in the proper C structure
-			decode_message(hw_led, c, messages[c]);
+			if (c == SST or c == SSL) {
+				messages[c][messages_size[c]] = 0x00; 
+				debug_print(DEBUG_INCOME_MSG, "RECEIVED JSOM message %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
+				decode_message(hw_led, c, messages[c]);	
+			} else if (c == SSS_S or c == SSS_P) {
+				debug_print(DEBUG_INCOME_MSG, "RECEIVED PCM message %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
+				if (DUMP_PCM) {  
+					decode_audio_stream_raw(dump_outfile_fd[c], messages[c], messages_size[c]);
+				}
+			} else {
+				printf("Here with invalid c=%d",c );
+			}
 		} else {
 			debug_print(DEBUG_INCOME_MSG, "returned 0 len for %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
 		}
@@ -586,6 +658,15 @@ int main(int argc, char *argv[]) {
 	  set_all_pots();
 	  if (DEBUG_INCOME_MSG) { printf("---------------------------------\nEND RECEPTION: %d\n---------------------------------\n\n", n_cycles);}
 	  n_cycles++;
-   }
-   printf("Received Data terminated [OK]\n");
+  }
+  printf("Receiving Data terminated [OK]\n");
+  if (DUMP_PCM) {  
+	  for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
+		if (c==SSS_S or c == SSS_P) {
+			fclose (dump_outfile_fd[c]); 
+		}
+	  }
+	  printf("Closed Files [OK]\n");
+  }
+   
 }

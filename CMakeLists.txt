@@ -10,6 +10,7 @@ pkg_check_modules(PC_FFTW3 REQUIRED fftw3f)
 pkg_check_modules(PC_ALSA REQUIRED alsa)
 pkg_check_modules(PC_LIBCONFIG REQUIRED libconfig)
 pkg_search_module (PC_JSON-C REQUIRED json-c json)
+
 find_library(MATRIX_CREATOR_HAL matrix_creator_hal)
 
 include_directories("${PROJECT_SOURCE_DIR}/include")
@@ -27,6 +28,9 @@ add_subdirectory(include)
 find_path (JSON_C_INCLUDE_DIR json.h PATH_SUFFIXES json-c json)
 find_library (JSON_C_LIBRARIES NAMES json-c libjson-c)
 include_directories (${JSON_C_INCLUDE_DIR})
+
+
+
 
 set(SRC
 
