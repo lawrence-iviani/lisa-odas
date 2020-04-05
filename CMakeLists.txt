@@ -223,6 +223,9 @@ target_link_libraries(odaslive
 #Add new DEMO based on matrix-odas
 add_executable(lisa-ODAS-receiver
     demo/lisa-ODAS-receiver/matrix-odas-receiver.cpp 
+	demo/lisa-ODAS-receiver/connection.cpp 
+	demo/lisa-ODAS-receiver/led_bus.cpp 
+	demo/lisa-ODAS-receiver/json_decoder.cpp 
 )
 target_link_libraries(lisa-ODAS-receiver
     odas
