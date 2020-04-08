@@ -37,6 +37,8 @@
 #define DUMP_PCM 1
 // Number of ODAS_data_source (SST, SSL, SSS_S, SSS_P)
 #define NUM_OF_ODAS_DATA_SOURCES 4 
+// The max baclog message number in socket recv. WIth 1 I assume only one message at time is processed (TODO: not sure of this assumption)
+#define MAX_RECV_BACKLOG 1
 
 // Raw wave data stream
 // as defined in SSS module in configuration sss.separated|postfiltered
@@ -52,12 +54,11 @@
 #define DEBUG_INCOME_MSG 0
 #define DEBUG_DECODE 0
 #define DEBUG_DUMP_FILES 0
+#define DEBUG_PYTHON_WRAPPER 0
 
 // Debug options specific components
 #define PRINT_DETECTION 1 // In relation to message debug only items that have a non empty tag for SST messages
 #define PRINT_MIN_DETECTION_SSL_E 0.2
-
-
 
 /* ------------------------------------------------------- */
 /* ---------- CONNECTION CONSTANT AND STRUCTURE ---------- */
@@ -77,15 +78,13 @@ const unsigned int n_bytes_raw_msg = (unsigned int) RECV_PCM_BUFFERS*SSS_HOPSIZE
 const unsigned int n_bytes_json_msg = 10240; // untouched from the matrix example
 const unsigned int n_bytes_msg[NUM_OF_ODAS_DATA_SOURCES] = {n_bytes_json_msg, n_bytes_json_msg, n_bytes_raw_msg, n_bytes_raw_msg }; // The max length of a message (assumning sizeof(char)=1), For SSS this is interpreted as the min block, if more data are available they are received as multiple of this number
 
-const int backlog = 1; // The number of message in queue in a recv
-
 static int servers_id[NUM_OF_ODAS_DATA_SOURCES] = {0, 0, 0, 0}; 
 static struct sockaddr_in servers_address[NUM_OF_ODAS_DATA_SOURCES];
 static int connections_id[NUM_OF_ODAS_DATA_SOURCES] = {0, 0, 0, 0}; 
 static char *messages[NUM_OF_ODAS_DATA_SOURCES] = {NULL, NULL, NULL, NULL};
 static unsigned int messages_size[NUM_OF_ODAS_DATA_SOURCES] = {0, 0, 0, 0}; 
 static FILE *dump_outfile_fd[NUM_OF_ODAS_DATA_SOURCES] = {NULL, NULL, NULL, NULL};
-static const char	*dump_outfile_name[NUM_OF_ODAS_DATA_SOURCES] = {"","", "separated.pcm", "postfiltered.pcm"} ;
+static const char	*dump_outfile_name[NUM_OF_ODAS_DATA_SOURCES] = {"","", "separated.pcm", "postfiltered.pcm"}; //TODO: serialize also the json messages?
 
 /* ----------------------------------------- */
 /* ---------- ODAS DATA STRUCTURE ---------- */
@@ -107,8 +106,8 @@ struct SSL_src_struct {
 	double E;
 }; // SSL src 
 struct SSL_struct {
-	SSL_src_struct src[MAX_ODAS_SOURCES]; // TODO, Max value or variable?
 	unsigned int timestamp;
+	SSL_src_struct src[MAX_ODAS_SOURCES]; // TODO, Max value or variable?
 }; // SSL struct message
 
 /* ---- example SST ----
@@ -129,12 +128,12 @@ struct SST_src_struct {
 	double y;
 	double z;
 	double activity;
-}; // SSL src 
+}; // SST src 
 
 struct SST_struct {
-	SST_src_struct src[MAX_ODAS_SOURCES]; // TODO, Max value or variable?
 	unsigned int timestamp;
-}; // SSL struct message
+	SST_src_struct src[MAX_ODAS_SOURCES]; // TODO, Max value or variable?
+}; // SST struct message
 
 struct led_energies_struct {
 	int energy_array_azimuth[ENERGY_COUNT]; // fi
@@ -142,9 +141,9 @@ struct led_energies_struct {
 	int detect[ENERGY_COUNT]; //detection level (if present)
 };
 
-/* -------------------------------------------------- */
-/* ---------- UTILITIES FOR DEBUG PRINTING ---------- */
-/* -------------------------------------------------- */
+/* ---------------------------------------------------------------- */
+/* ---------- UTILITIES FOR DEBUG & OTHERS COMMONALITIES ---------- */
+/* ---------------------------------------------------------------- */
 // https://stackoverflow.com/questions/8487986/file-macro-shows-full-path
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 // For Windows use '\\' instead of '/'.
@@ -154,6 +153,13 @@ struct led_energies_struct {
         do { if (DEBUG) fprintf(stdout, "%s:%d:%s(): " fmt, __FILENAME__, \
                                 __LINE__, __func__, __VA_ARGS__); fflush(stdout);} while (0)
 
+#ifdef __cplusplus
+#define EXTERN_C extern "C" {
+#define EXTERN_C_END }
+#else
+#define EXTERN_C
+#define EXTERN_C_END
+#endif
 
 
 #endif 

@@ -1,8 +1,12 @@
 
+
+
 #include "common.h"
 #include "led_bus.h"
 #include "connection.h"
 #include "json_decoder.h"
+#include "matrix_odas_receiver.h"
+#include "python_wrapper.h"
 
 /* --------------------------------------------- */
 /* ---------- INTERNAL DATA STRUCTURE ---------- */
@@ -10,6 +14,7 @@
 static SSL_struct SSL_data;
 static SST_struct SST_data;
 static hal_leds_struct hw_led;
+const int backlog = MAX_RECV_BACKLOG; // The number of message in queue in a recv
 
 /* ------------------------------- */
 /* ---------- FUNCTIONS ---------- */
@@ -45,7 +50,6 @@ char* message2str(int odas_id, char msg[]) {
 	}
 	return msg;
 }
-
 
 //DECODE ODAS MESSAGE
 void decode_message(unsigned int msg_type, char * odas_json_msg) {
@@ -85,8 +89,11 @@ void decode_audio_stream_raw(FILE* outfile, char* odas_stream_msg, int message_l
 		printf("Received a non well formatted raw message... TODO!!!!!!!!!!!!!!!!!!!!!!");
 		// TODO: should I limit the message len to skip the last frames. But this sounds not nessary, granted by the recv
 	}
-	debug_print(DEBUG_DUMP_FILES, "Writing %d bytes in %d frames of len=%d (word is %d) ---> fd=%d\n%", message_len, n_frames_inmsg, n_bytes_frame_inmsg, n_bytes_sample_inmsg, outfile);	
-	fwrite(odas_stream_msg, sizeof(char), message_len, outfile);
+	
+	if (outfile!=NULL) {
+		debug_print(DEBUG_DUMP_FILES, "Writing %d bytes in %d frames of len=%d (word is %d) ---> fd=%d\n%", message_len, n_frames_inmsg, n_bytes_frame_inmsg, n_bytes_sample_inmsg, outfile);	
+		fwrite(odas_stream_msg, sizeof(char), message_len, outfile);
+	}
 }
 
 int main_loop() {
@@ -173,6 +180,7 @@ int main_loop() {
 // RECEIVING DATA
   printf("Receiving data........... \n");
   int bytes_available;
+  void* SSx_data;
   unsigned long n_cycles = 1; // Just a counter
   while (!reception_terminate(messages_size)) { 
 	  // Separator to print only when debugging but not with the debug formatting	  
@@ -192,12 +200,21 @@ int main_loop() {
 			// Decode an incoming message and store in the proper C structure
 			if (c == SST or c == SSL) {
 				messages[c][messages_size[c]] = 0x00; 
-				debug_print(DEBUG_INCOME_MSG, "RECEIVED JSOM message %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
-				decode_message( c, messages[c]);	
+				debug_print(DEBUG_INCOME_MSG, "RECEIVED JSON message %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
+				decode_message( c, messages[c]);
+				if (has_py_callback(c)) {
+					SSx_data = NULL;
+					SSx_data = c == SSL ? (void*)&SSL_data : SSx_data;
+					SSx_data = c == SST ? (void*)&SST_data : SSx_data;
+					py_callback_message(c, SSx_data) ;
+				}			
 			} else if (c == SSS_S or c == SSS_P) {
 				debug_print(DEBUG_INCOME_MSG, "RECEIVED PCM message %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
 				if (DUMP_PCM) {  
 					decode_audio_stream_raw(dump_outfile_fd[c], messages[c], messages_size[c]);
+				} 
+				if (has_py_callback(c)) {
+					py_callback_stream(c,  messages_size[c], messages[c]);
 				}
 			} else {
 				printf("Here with invalid c=%d",c );
@@ -223,9 +240,5 @@ int main_loop() {
 	  printf("Closed Files [OK]\n");
   }
   return 1; 
-}
-
-int main(int argc, char *argv[]) {
-	return main_loop();
 }
 

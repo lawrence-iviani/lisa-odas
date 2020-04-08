@@ -215,22 +215,35 @@ add_executable(odaslive
     demo/odaslive/profiler.c
     demo/odaslive/threads.c
 )
+
 target_link_libraries(odaslive
     odas
 )
 
 
 #Add new DEMO based on matrix-odas
-add_executable(lisa-ODAS-receiver
-    demo/lisa-ODAS-receiver/matrix-odas-receiver.cpp 
+
+add_library(lisarcv SHARED
+	demo/lisa-ODAS-receiver/matrix_odas_receiver.cpp 
 	demo/lisa-ODAS-receiver/connection.cpp 
 	demo/lisa-ODAS-receiver/led_bus.cpp 
 	demo/lisa-ODAS-receiver/json_decoder.cpp 
+	demo/lisa-ODAS-receiver/python_wrapper.cpp 
 )
-target_link_libraries(lisa-ODAS-receiver
+
+target_link_libraries(lisarcv
     odas
     ${JSON_C_LIBRARIES}
     ${MATRIX_CREATOR_HAL}
+)
+
+add_executable(lisa-ODAS-receiver
+    demo/lisa-ODAS-receiver/main.cpp
+)
+
+target_link_libraries(lisa-ODAS-receiver
+    odas
+    lisarcv
 )
 
 add_executable(odasserver

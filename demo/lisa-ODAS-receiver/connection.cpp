@@ -6,7 +6,6 @@
 /* --------------------------------------------- */
 static int counter_no_data = MAX_EMPTY_MESSAGE; //counter for empty messages, used for timeout
 
-
 // CONNECTION SECTION
 int init_connection(sockaddr_in &server_address, int port_number, int backlog) {
 	/*Init a non blocking connection and return the socket ID*/
