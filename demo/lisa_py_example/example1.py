@@ -17,13 +17,10 @@ MAX_ODAS_SOURCES = 4
 pTag = ctypes.create_string_buffer(SST_TAG_LEN)
 print(pTag)
 
-	
-
 libtest = npct.load_library('../../lib/liblisarcv', os.path.dirname(__file__))
 print(libtest)
 libtest.main_loop.restype = ctypes.c_int
 libtest.main_loop.argtypes = None
-
 
 ##################
 ## callback_SSL ##

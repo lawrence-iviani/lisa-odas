@@ -34,7 +34,7 @@
 // This must be the same parameters as in defined in configuration ssl.nPots, the fix number of messages, stream that are transmitted.
 #define MAX_ODAS_SOURCES 4
 // Use for dumping received RAW files to PCM
-#define DUMP_PCM 1
+#define DUMP_PCM 0
 // Number of ODAS_data_source (SST, SSL, SSS_S, SSS_P)
 #define NUM_OF_ODAS_DATA_SOURCES 4 
 // The max baclog message number in socket recv. WIth 1 I assume only one message at time is processed (TODO: not sure of this assumption)
@@ -57,7 +57,7 @@
 #define DEBUG_PYTHON_WRAPPER 0
 
 // Debug options specific components
-#define PRINT_DETECTION 1 // In relation to message debug only items that have a non empty tag for SST messages
+#define PRINT_DETECTION 0 // In relation to message debug only items that have a non empty tag for SST messages
 #define PRINT_MIN_DETECTION_SSL_E 0.2
 
 /* ------------------------------------------------------- */
