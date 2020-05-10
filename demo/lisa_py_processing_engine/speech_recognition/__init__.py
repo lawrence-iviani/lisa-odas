@@ -68,23 +68,22 @@ class OdasRaw(AudioSource):
     Higher ``sample_rate`` values result in better audio quality, but also more bandwidth (and therefore, slower recognition). Additionally, some CPUs, such as those in older Raspberry Pi models, can't keep up if this value is too high.
     Higher ``chunk_size`` values help avoid triggering on rapidly changing ambient noise, but also makes detection less sensitive. This value, generally, should be left at its default.
     """
-    def __init__(self, callback_queue, sample_rate=16000, chunk_size=1024, nbits =16):
-        assert callback_queue is not None  and isinstance(callback_queue, Queue), "Not a valid data queue in input"
+    def __init__(self, audio_queue, sample_rate=16000, chunk_size=1024, nbits =16):
+        assert audio_queue is not None  and isinstance(audio_queue, Queue), "Not a valid data queue in input"
         assert sample_rate is None or (isinstance(sample_rate, int) and sample_rate > 0), "Sample rate must be None or a positive integer"
         assert isinstance(chunk_size, int) and chunk_size > 0, "Chunk size must be a positive integer"
         assert isinstance(nbits, int) and nbits in [8,16,24,32], "bits must be one of 8,16,24,32"
 
         self.logger = logging.getLogger(name="OdasStream")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.INFO)
 		
-        self.queue = callback_queue
+        self.queue = audio_queue
         self.SAMPLE_WIDTH = nbits//8 #self.pyaudio_module.get_sample_size(self.format)  # size of each sample
         self.SAMPLE_RATE = sample_rate  # sampling rate in Hertz
         self.CHUNK = chunk_size  # number of frames stored in each buffer
         
         self.stream = None
-        self.logger.info("OdasStream: init")
-
+        self.logger.debug("OdasStream: init")
 
     def __enter__(self):
         assert self.stream is None, "This audio source is already inside a context manager"
@@ -92,8 +91,8 @@ class OdasRaw(AudioSource):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        self.logger.debug("__exit__: {}-{}-{}".format(exc_type, exc_value, traceback))
         pass
-
 
     class OdasRawStream(object):
         def __init__(self, raw_queue):
@@ -105,7 +104,7 @@ class OdasRaw(AudioSource):
             # print("get from queue  3 samples  {} ...".format(buf_np[0:3]))
             # buf = buf_np.tobytes() # buf is a numpyarray to bytes seems to work...
             buf = self.raw_queue.get().tobytes()
-            self.raw_queue.task_done() # sign the last job as done
+            self.raw_queue.task_done()  # sign the last job as done
             return buf
 
         def close(self):	
@@ -138,7 +137,7 @@ class Microphone(AudioSource):
         self.pyaudio_module = self.get_pyaudio()
         audio = self.pyaudio_module.PyAudio()
         self.logger = logging.getLogger(name="Microphone")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.INFO)
         try:
             count = audio.get_device_count()  # obtain device count
             if device_index is not None:  # ensure device index is in range
@@ -155,7 +154,7 @@ class Microphone(AudioSource):
         self.SAMPLE_WIDTH = self.pyaudio_module.get_sample_size(self.format)  # size of each sample
         self.SAMPLE_RATE = sample_rate  # sampling rate in Hertz
         self.CHUNK = chunk_size  # number of frames stored in each buffer
-        self.logger.info("Microphone.init: SR={},WIDTH={}, CHUNK_LEN={}. bitrate={} - device {} ".format(self.SAMPLE_RATE, self.SAMPLE_WIDTH, self.CHUNK, self.SAMPLE_RATE * self.SAMPLE_WIDTH * 8, self.device_index))
+        self.logger.debug("Microphone.init: SR={},WIDTH={}, CHUNK_LEN={}. bitrate={} - device {} ".format(self.SAMPLE_RATE, self.SAMPLE_WIDTH, self.CHUNK, self.SAMPLE_RATE * self.SAMPLE_WIDTH * 8, self.device_index))
 
         self.audio = None
         self.stream = None
@@ -397,8 +396,12 @@ class AudioData(object):
         self.frame_data = frame_data
         self.sample_rate = sample_rate
         self.sample_width = int(sample_width)
+        self.length = len(self.frame_data) / self.sample_rate / self.sample_width
         self.logger = logging.getLogger(name="AudioData")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.INFO)
+        self.metadata = {}
+        # TODO: add a time reference for the first sample?
+        # TODO: add metadata for SSL/SST, (Generic mechanism on dict?)
 
     def get_segment(self, start_ms=None, end_ms=None):
         """
@@ -549,14 +552,31 @@ class AudioData(object):
         flac_data, stderr = process.communicate(wav_data)
         return flac_data
 
+    def add_metadata(self, dict_metadata):
+        for k in dict_metadata.keys():
+            self.metadata[k] = dict_metadata[k]
 
-class Recognizer(AudioSource):
-    def __init__(self):
+    def _metadata_to_str(self):
+        return "".join(["\n\t"+k + "=" + str(v) + "  " for k, v in self.metadata.items()])
+
+    def __str__(self):
+        return "{} sr={}Hz, len={}s. Metadata: {}".format(self.__class__,self.sample_rate, self.length, self._metadata_to_str())
+
+
+class SpeechListener(AudioSource):
+
+    def __init__(self, snowboy_configuration=None):
         """
         Creates a new ``Recognizer`` instance, which represents a collection of speech recognition functionality.
+         The ``snowboy_configuration`` parameter allows integration with `Snowboy <https://snowboy.kitt.ai/>`__,
+         an offline, high-accuracy, power-efficient hotword recognition engine.
+         When used, this function will pause until Snowboy detects a hotword, after which it will unpause.
+         This parameter should either be ``None`` to turn off Snowboy support, or a tuple of the form ``(SNOWBOY_LOCATION, LIST_OF_HOT_WORD_FILES)``,
+         where ``SNOWBOY_LOCATION`` is the path to the Snowboy root directory, and ``LIST_OF_HOT_WORD_FILES`` is a list of paths to
+         Snowboy hotword configuration files (`*.pmdl` or `*.umdl` format).
         """
-		# TODO: these should be configurable!
-        self.energy_threshold = 700 #300  # minimum audio energy to consider for recording
+        # TODO: these should be configurable!
+        self.energy_threshold = 700  # 300  # minimum audio energy to consider for recording
         self.dynamic_energy_threshold = True
         self.dynamic_energy_adjustment_damping = 0.15
         self.dynamic_energy_ratio = 1.5
@@ -565,11 +585,17 @@ class Recognizer(AudioSource):
 
         self.phrase_threshold = 0.3  # minimum seconds of speaking audio before we consider the speaking audio a phrase - values below this are ignored (for filtering out clicks and pops)
         self.non_speaking_duration = 0.5  # seconds of non-speaking audio to keep on both sides of the recording
-		
-        self.logger = logging.getLogger(name="Recognizer")
+        self.logger = logging.getLogger(name="SpeechListener")
         self.logger.setLevel(logging.INFO)
 
-        self.set_sphinx_params() # pre init sphinx with default behavioral parameters
+        self.snowboy_configuration = None
+        if snowboy_configuration is not None:
+            assert os.path.isfile(os.path.join(snowboy_configuration[0],
+                                               "snowboydetect.py")), "``snowboy_configuration[0]`` must be a Snowboy root directory containing ``snowboydetect.py``"
+            for hot_word_file in snowboy_configuration[1]:
+                assert os.path.isfile(
+                    hot_word_file), "``snowboy_configuration[1]`` must be a list of Snowboy hot word configuration files"
+            self.snowboy_configuration = snowboy_configuration
 
     def record(self, source, duration=None, offset=None):
         """
@@ -628,7 +654,166 @@ class Recognizer(AudioSource):
             target_energy = energy * self.dynamic_energy_ratio
             self.energy_threshold = self.energy_threshold * damping + target_energy * (1 - damping)
 
-    def snowboy_wait_for_hot_word(self, snowboy_location, snowboy_hot_word_files, source, timeout=None):
+    def listen(self, source, timeout=None, phrase_time_limit=None, snowboy_configuration=None):
+
+        assert isinstance(source, AudioSource), "Source must be an audio source"
+        assert source.stream is not None, "Audio source must be entered before listening, see documentation for ``AudioSource``; are you using ``source`` outside of a ``with`` statement?"
+        assert self.pause_threshold >= self.non_speaking_duration >= 0
+        if snowboy_configuration is not None:
+            assert os.path.isfile(os.path.join(snowboy_configuration[0], "snowboydetect.py")), "``snowboy_configuration[0]`` must be a Snowboy root directory containing ``snowboydetect.py``"
+            for hot_word_file in snowboy_configuration[1]:
+                assert os.path.isfile(hot_word_file), "``snowboy_configuration[1]`` must be a list of Snowboy hot word configuration files"
+
+        seconds_per_buffer = float(source.CHUNK) / source.SAMPLE_RATE
+        pause_buffer_count = int(math.ceil(self.pause_threshold / seconds_per_buffer))  # number of buffers of non-speaking audio during a phrase, before the phrase should be considered complete
+        phrase_buffer_count = int(math.ceil(self.phrase_threshold / seconds_per_buffer))  # minimum number of buffers of speaking audio before we consider the speaking audio a phrase
+        non_speaking_buffer_count = int(math.ceil(self.non_speaking_duration / seconds_per_buffer))  # maximum number of buffers of non-speaking audio to retain before and after a phrase
+
+        self.logger.debug("listen: seconds_per_buffer={} , pause_buffer_count={}, phrase_buffer_count={} non_speaking_buffer_count={}".format(seconds_per_buffer, pause_buffer_count, phrase_buffer_count, non_speaking_buffer_count))
+        # read audio input for phrases until there is a phrase that is long enough
+        elapsed_time = 0  # number of seconds of audio read
+        buffer = b""  # an empty buffer means that the stream has ended and there is no data left to read
+        # Audio Detection
+        while True:
+            frames = collections.deque()
+
+            if snowboy_configuration is None:
+                # store audio input until the phrase starts
+                while True:
+                    # handle waiting too long for phrase by raising an exception
+                    elapsed_time += seconds_per_buffer
+                    if timeout and elapsed_time > timeout:
+                        raise WaitTimeoutError("DETECTION: listening timed out while waiting for phrase to start")
+
+                    buffer = source.stream.read(source.CHUNK)
+                    self.logger.debug("DETECTION: N chunk to read={} samples, buffer size={} bytes".format(source.CHUNK, len(buffer)))
+                    if len(buffer) == 0: break  # reached end of the stream
+                    frames.append(buffer)
+                    if len(frames) > non_speaking_buffer_count:  # ensure we only keep the needed amount of non-speaking buffers
+                        _a = frames.popleft()
+                        self.logger.debug("DETECTION: ensure we only keep the needed amount of non-speaking buffers: popleft=".format(len(_a)))
+
+
+                    # detect whether speaking has started on audio input
+                    energy = audioop.rms(buffer, source.SAMPLE_WIDTH)  # energy of the audio signal
+                    self.logger.debug("DETECTION: detected? {}, energy/energy_threshold: {}/{}={}".format(energy > self.energy_threshold, energy, self.energy_threshold, energy/self.energy_threshold))
+                    if energy > self.energy_threshold:
+                        self.logger.debug("source detected, energy/energy_threshold: {}".format(energy/self.energy_threshold))
+                        break
+                    elif energy > 0.707*self.energy_threshold:
+                        self.logger.debug("source over -3dB threshold, energy/energy_threshold: {} (dyn_th={})".format(energy/self.energy_threshold,self.energy_threshold))
+
+                    # dynamically adjust the energy threshold using asymmetric weighted average
+                    if self.dynamic_energy_threshold:
+                        damping = self.dynamic_energy_adjustment_damping ** seconds_per_buffer  # account for different chunk sizes and rates
+                        target_energy = energy * self.dynamic_energy_ratio
+                        self.energy_threshold = self.energy_threshold * damping + target_energy * (1 - damping)
+                    self.logger.debug("DETECTION:  new dynamic_energy_threshold: {}".format(self.energy_threshold))
+            else:
+                # read audio input until the hotword is said
+                snowboy_location, snowboy_hot_word_files = snowboy_configuration
+                buffer, delta_time = self.snowboy_wait_for_hot_word(snowboy_location, snowboy_hot_word_files, source, timeout)
+                elapsed_time += delta_time
+                if len(buffer) == 0: break  # reached end of the stream
+                frames.append(buffer)
+            # ----- END OF DETECTION
+            # TODO: the frames should be returned? is a deque of raw bytes, Could be transformed easily in audio data?
+
+            # Audio Listen
+            # read audio input until the phrase ends, so extract here
+            pause_count, phrase_count = 0, 0
+            phrase_start_time = elapsed_time
+            while True:
+                # handle phrase being too long by cutting off the audio
+                elapsed_time += seconds_per_buffer
+                if phrase_time_limit and elapsed_time - phrase_start_time > phrase_time_limit:
+                    self.logger.debug("LISTEN: phrase limit exceeded: elapsed {}, started at {} ".format(elapsed_time, phrase_start_time))
+                    break
+
+                buffer = source.stream.read(source.CHUNK)
+                self.logger.debug("LISTEN: N chunk to read={}, actually read={}".format(source.CHUNK, len(buffer)))
+                if len(buffer) == 0:
+                    self.logger.debug("LISTEN: reached end of the stream")
+                    break  # reached end of the stream
+                frames.append(buffer)
+                phrase_count += 1
+
+                # check if speaking has stopped for longer than the pause threshold on the audio input
+                energy = audioop.rms(buffer, source.SAMPLE_WIDTH)  # unit energy of the audio signal within the buffer
+
+                if energy > self.energy_threshold:
+                    pause_count = 0
+                else:
+                    pause_count += 1
+                self.logger.debug("LISTEN: chunk [{} time,{} energy] - phrase_count {} - pause_count {} ".format(elapsed_time - phrase_start_time, energy, phrase_count, pause_count))
+
+                if pause_count > pause_buffer_count:  # end of the phrase
+                    self.logger.debug("LISTEN: end of the phrase. pause_count {} > {} ".format(pause_count, pause_buffer_count))
+                    break
+
+            # check how long the detected phrase is, and retry listening if the phrase is too short
+            phrase_count -= pause_count  # exclude the buffers for the pause before the phrase
+            self.logger.debug("PHRASE COUNT: phrase_count ({}) >= phrase_buffer_count ({}) or len(buffer) {}==0 ".format(phrase_count, phrase_buffer_count, len(buffer)))
+            if phrase_count >= phrase_buffer_count or len(buffer) == 0:
+                self.logger.debug("PHRASE COUNT: phrase is long enough or we've reached the end of the stream, so stop listening.")
+                break  # phrase is long enough or we've reached the end of the stream, so stop listening
+            else:
+                self.logger.debug("PHRASE COUNT: Still frame to decode Next iteration")
+
+        # obtain frame data
+        for i in range(pause_count - non_speaking_buffer_count): frames.pop()  # remove extra non-speaking frames at the end
+        frame_data = b"".join(frames)
+        self.logger.debug("Returns from acquisition phrase duration: {} - phrase_count={} pause_count={} phrase_buffer_count={}".format(elapsed_time - phrase_start_time, phrase_count, pause_count, phrase_buffer_count))
+
+        return AudioData(frame_data, source.SAMPLE_RATE, source.SAMPLE_WIDTH)
+
+    def listen_in_background(self, source, callback, phrase_time_limit=None):
+        """
+        Spawns a thread to repeatedly record phrases from ``source`` (an ``AudioSource`` instance) into an ``AudioData`` instance and call ``callback`` with that ``AudioData`` instance as soon as each phrase are detected.
+        Returns a function object that, when called, requests that the background listener thread stop. The background thread is a daemon and will not stop the program from exiting if there are no other non-daemon threads. The function accepts one parameter, ``wait_for_stop``: if truthy, the function will wait for the background listener to stop before returning, otherwise it will return immediately and the background listener thread might still be running for a second or two afterwards. Additionally, if you are using a truthy value for ``wait_for_stop``, you must call the function from the same thread you originally called ``listen_in_background`` from.
+        Phrase recognition uses the exact same mechanism as ``recognizer_instance.listen(source)``. The ``phrase_time_limit`` parameter works in the same way as the ``phrase_time_limit`` parameter for ``recognizer_instance.listen(source)``, as well.
+        The ``callback`` parameter is a function that should accept two parameters - the ``recognizer_instance``, and an ``AudioData`` instance representing the captured audio. Note that ``callback`` function will be called from a non-main thread.
+        """
+        assert isinstance(source, AudioSource), "Source must be an audio source"
+        running = [True]
+
+        def threaded_listen():
+            with source as s:
+                while running[0]:
+                    try:  # listen for 1 second, then check again if the stop function has been called
+                        audio = self.listen(s, 1, phrase_time_limit)
+                    except WaitTimeoutError:  # listening timed out, just try again
+                        pass
+                    else:
+                        if running[0]: callback(self, audio)
+
+        def stopper(wait_for_stop=True):
+            running[0] = False
+            if wait_for_stop:
+                listener_thread.join()  # block until the background thread is done, which can take around 1 second
+
+        listener_thread = threading.Thread(target=threaded_listen)
+        listener_thread.daemon = True
+        listener_thread.start()
+        return stopper
+
+    def _detection_constants(self, source):
+        seconds_per_buffer = float(source.CHUNK) / source.SAMPLE_RATE
+        pause_buffer_count = int(math.ceil(
+            self.pause_threshold / seconds_per_buffer))  # number of buffers of non-speaking audio during a phrase, before the phrase should be considered complete
+        phrase_buffer_count = int(math.ceil(
+            self.phrase_threshold / seconds_per_buffer))  # minimum number of buffers of speaking audio before we consider the speaking audio a phrase
+        non_speaking_buffer_count = int(math.ceil(
+            self.non_speaking_duration / seconds_per_buffer))  # maximum number of buffers of non-speaking audio to retain before and after a phrase
+
+        return seconds_per_buffer, pause_buffer_count, phrase_buffer_count, non_speaking_buffer_count
+
+    @staticmethod
+    def _audio_metadata_to_str(metadata):
+        return "".join(["\t"+k + "=" + str(v)  for k, v in metadata.items()])
+
+    @staticmethod
+    def snowboy_wait_for_hot_word(snowboy_location, snowboy_hot_word_files, source, timeout=None):
         # load snowboy library (NOT THREAD SAFE)
         sys.path.append(snowboy_location)
         import snowboydetect
@@ -665,7 +850,8 @@ class Recognizer(AudioSource):
             frames.append(buffer)
 
             # resample audio to the required sample rate
-            resampled_buffer, resampling_state = audioop.ratecv(buffer, source.SAMPLE_WIDTH, 1, source.SAMPLE_RATE, snowboy_sample_rate, resampling_state)
+            resampled_buffer, resampling_state = audioop.ratecv(buffer, source.SAMPLE_WIDTH, 1, source.SAMPLE_RATE,
+                                                                snowboy_sample_rate, resampling_state)
             resampled_frames.append(resampled_buffer)
             if time.time() - last_check > check_interval:
                 # run Snowboy on the resampled audio
@@ -677,62 +863,76 @@ class Recognizer(AudioSource):
 
         return b"".join(frames), elapsed_time
 
-    def listen(self, source, timeout=None, phrase_time_limit=None, snowboy_configuration=None):
+    def detect_speech_activity(self, source, detection_callback=None, timeout=None):
         """
-        Records a single phrase from ``source`` (an ``AudioSource`` instance) into an ``AudioData`` instance, which it returns.
+        listen a single phrase from ``source`` (an ``AudioSource`` instance) into an ``AudioData`` instance, which it returns.
         This is done by waiting until the audio has an energy above ``recognizer_instance.energy_threshold`` (the user has started speaking), and then recording until it encounters ``recognizer_instance.pause_threshold`` seconds of non-speaking or there is no more audio input. The ending silence is not included.
         The ``timeout`` parameter is the maximum number of seconds that this will wait for a phrase to start before giving up and throwing an ``speech_recognition.WaitTimeoutError`` exception. If ``timeout`` is ``None``, there will be no wait timeout.
         The ``phrase_time_limit`` parameter is the maximum number of seconds that this will allow a phrase to continue before stopping and returning the part of the phrase processed before the time limit was reached. The resulting audio will be the phrase cut off at the time limit. If ``phrase_timeout`` is ``None``, there will be no phrase time limit.
-        The ``snowboy_configuration`` parameter allows integration with `Snowboy <https://snowboy.kitt.ai/>`__, an offline, high-accuracy, power-efficient hotword recognition engine. When used, this function will pause until Snowboy detects a hotword, after which it will unpause. This parameter should either be ``None`` to turn off Snowboy support, or a tuple of the form ``(SNOWBOY_LOCATION, LIST_OF_HOT_WORD_FILES)``, where ``SNOWBOY_LOCATION`` is the path to the Snowboy root directory, and ``LIST_OF_HOT_WORD_FILES`` is a list of paths to Snowboy hotword configuration files (`*.pmdl` or `*.umdl` format).
         This operation will always complete within ``timeout + phrase_timeout`` seconds if both are numbers, either by returning the audio data, or by raising a ``speech_recognition.WaitTimeoutError`` exception.
         """
         assert isinstance(source, AudioSource), "Source must be an audio source"
         assert source.stream is not None, "Audio source must be entered before listening, see documentation for ``AudioSource``; are you using ``source`` outside of a ``with`` statement?"
         assert self.pause_threshold >= self.non_speaking_duration >= 0
-        if snowboy_configuration is not None:
-            assert os.path.isfile(os.path.join(snowboy_configuration[0], "snowboydetect.py")), "``snowboy_configuration[0]`` must be a Snowboy root directory containing ``snowboydetect.py``"
-            for hot_word_file in snowboy_configuration[1]:
-                assert os.path.isfile(hot_word_file), "``snowboy_configuration[1]`` must be a list of Snowboy hot word configuration files"
 
-        seconds_per_buffer = float(source.CHUNK) / source.SAMPLE_RATE
-        pause_buffer_count = int(math.ceil(self.pause_threshold / seconds_per_buffer))  # number of buffers of non-speaking audio during a phrase, before the phrase should be considered complete
-        phrase_buffer_count = int(math.ceil(self.phrase_threshold / seconds_per_buffer))  # minimum number of buffers of speaking audio before we consider the speaking audio a phrase
-        non_speaking_buffer_count = int(math.ceil(self.non_speaking_duration / seconds_per_buffer))  # maximum number of buffers of non-speaking audio to retain before and after a phrase
+        seconds_per_buffer, pause_buffer_count, phrase_buffer_count, non_speaking_buffer_count = self._detection_constants(source)
 
-        self.logger.debug("listen: seconds_per_buffer={} , pause_buffer_count={}, phrase_buffer_count={} non_speaking_buffer_count={}".format(seconds_per_buffer, pause_buffer_count, phrase_buffer_count, non_speaking_buffer_count))
+        self.logger.debug(
+            "DETECTION: start detecting speech. seconds_per_buffer={}s, saving max {}s".format(seconds_per_buffer,
+                                                                                               non_speaking_buffer_count*seconds_per_buffer
+                                                                                               ))
         # read audio input for phrases until there is a phrase that is long enough
         elapsed_time = 0  # number of seconds of audio read
         buffer = b""  # an empty buffer means that the stream has ended and there is no data left to read
-		
-		# Audio Detection
+        # Audio Detection
+        # if detection callback is active we want to store some external metadata in specific moments
+        _metadata_detected_dict = {}
+        def _tag_data(tag):
+            if detection_callback is not None:
+                _callback_dict = detection_callback()
+                for _k, _v in _callback_dict.items():
+                    _metadata_detected_dict[tag + '.' + _k] = _v
+
         while True:
             frames = collections.deque()
 
-            if snowboy_configuration is None:
+            if self.snowboy_configuration is None:
                 # store audio input until the phrase starts
                 while True:
                     # handle waiting too long for phrase by raising an exception
                     elapsed_time += seconds_per_buffer
                     if timeout and elapsed_time > timeout:
-                        raise WaitTimeoutError("DETECTION: listening timed out while waiting for phrase to start")
+                        return None  # no source detected
+                        # raise WaitTimeoutError("DETECTION: listening timed out while waiting for phrase to start")
 
                     buffer = source.stream.read(source.CHUNK)
-                    self.logger.debug("DETECTION: N chunk to read={} samples, buffer size={} bytes".format(source.CHUNK, len(buffer)))
+                    self.logger.debug(
+                        "DETECTION: N chunk to read={} samples, buffer size={} bytes".format(source.CHUNK, len(buffer)))
                     if len(buffer) == 0: break  # reached end of the stream
                     frames.append(buffer)
-                    if len(frames) > non_speaking_buffer_count:  # ensure we only keep the needed amount of non-speaking buffers
+                    if len(
+                            frames) > non_speaking_buffer_count:  # ensure we only keep the needed amount of non-speaking buffers
                         _a = frames.popleft()
-                        self.logger.debug("DETECTION: ensure we only keep the needed amount of non-speaking buffers: popleft=".format(len(_a)))
-						
+                        self.logger.debug(
+                            "DETECTION: ensure we only keep the needed amount of non-speaking buffers: popleft=".format(
+                                len(_a)))
 
                     # detect whether speaking has started on audio input
                     energy = audioop.rms(buffer, source.SAMPLE_WIDTH)  # energy of the audio signal
-                    self.logger.debug("DETECTION: detected? {}, energy/energy_threshold: {}/{}={}".format(energy > self.energy_threshold, energy, self.energy_threshold, energy/self.energy_threshold))
-                    if energy > self.energy_threshold: 
-                        self.logger.info("source detected, energy/energy_threshold: {}".format(energy/self.energy_threshold))
+                    self.logger.debug("DETECTION: detected? {}, energy/energy_threshold: {}/{}={}".format(
+                        energy > self.energy_threshold, energy, self.energy_threshold, energy / self.energy_threshold))
+                    if energy > self.energy_threshold:
+                        # Add detection metadata
+                        _metadata_detected_dict['detection.elapsed_time'] = elapsed_time
+                        _tag_data("detection")  # or last active speech frame
+                        self.logger.debug("source detected at frame {}s, energy/energy_threshold: {}, metadata: {} ".
+                                          format(elapsed_time, energy / self.energy_threshold,
+                                                 self._audio_metadata_to_str(_metadata_detected_dict)))
+
                         break
-                    elif energy > 0.707*self.energy_threshold:
-                        self.logger.debug("source over -3dB threshold, energy/energy_threshold: {} (dyn_th={})".format(energy/self.energy_threshold,self.energy_threshold))
+                    elif energy > 0.707 * self.energy_threshold:
+                        self.logger.debug("source over -3dB threshold, energy/energy_threshold: {} (dyn_th={})".format(
+                            energy / self.energy_threshold, self.energy_threshold))
 
                     # dynamically adjust the energy threshold using asymmetric weighted average
                     if self.dynamic_energy_threshold:
@@ -742,26 +942,81 @@ class Recognizer(AudioSource):
                     self.logger.debug("DETECTION:  new dynamic_energy_threshold: {}".format(self.energy_threshold))
             else:
                 # read audio input until the hotword is said
-                snowboy_location, snowboy_hot_word_files = snowboy_configuration
-                buffer, delta_time = self.snowboy_wait_for_hot_word(snowboy_location, snowboy_hot_word_files, source, timeout)
+                snowboy_location, snowboy_hot_word_files = self.snowboy_configuration
+                buffer, delta_time = self.snowboy_wait_for_hot_word(snowboy_location,
+                                                                          snowboy_hot_word_files,
+                                                                          source,
+                                                                          timeout)
                 elapsed_time += delta_time
-                if len(buffer) == 0: break  # reached end of the stream
+                if len(buffer) == 0:
+                    return None  # reached end of the stream
                 frames.append(buffer)
+            # ----- END OF DETECTION
 
-			# Audio Listen
-            # read audio input until the phrase ends
+            # Return an audio data object
+            frame_data = b"".join(frames)
+
+            retval = AudioData(frame_data, source.SAMPLE_RATE, source.SAMPLE_WIDTH)
+            retval.add_metadata(_metadata_detected_dict)
+
+            self.logger.debug("Speech activity detected: {}s, saved {}s of audio, metadata: {}".format(elapsed_time,
+                                                                                           retval.length,
+                                                                                           self._audio_metadata_to_str(_metadata_detected_dict)))
+            return retval
+
+    def process_speech(self, source, previous_audio=None, phrase_time_limit=None, detection_callback=None):
+        # Audio Listen
+        # read audio input until the phrase ends, so extract here
+        pause_count, phrase_count = 0, 0
+        phrase_start_time = 0
+        elapsed_time = 0
+        seconds_per_buffer, pause_buffer_count, phrase_buffer_count, non_speaking_buffer_count = self._detection_constants(source)
+        # seconds_per_buffer = float(source.CHUNK) / source.SAMPLE_RATE
+        # pause_buffer_count = int(math.ceil(
+        #     self.pause_threshold / seconds_per_buffer))  # number of buffers of non-speaking audio during a phrase, before the phrase should be considered complete
+        # phrase_buffer_count = int(math.ceil(
+        #     self.phrase_threshold / seconds_per_buffer))  # minimum number of buffers of speaking audio before we consider the speaking audio a phrase
+        # non_speaking_buffer_count = int(math.ceil(
+        #     self.non_speaking_duration / seconds_per_buffer))  # maximum number of buffers of non-speaking audio to retain before and after a phrase
+
+        frames = collections.deque()
+        if previous_audio is not None: #... add in front
+            frames.append(previous_audio.frame_data)
+            elapsed_time = previous_audio.length
+            self.logger.debug("LISTEN: added previous audio of {}s".format(elapsed_time))
+        else:
+            self.logger.debug("LISTEN: starting from 0.0s")
+
+        # if detection callback is active we want to store some external metadata in specific moments
+        _metadata_detected_dict = {}
+        def _tag_data(tag):
+            if detection_callback is not None:
+                _callback_dict = detection_callback()
+                for _k, _v in _callback_dict.items():
+                    _metadata_detected_dict[tag+'.'+_k] = _v
+
+        buffer = b""  # an empty buffer means that the stream has ended and there is no data left to read
+        while True:
             pause_count, phrase_count = 0, 0
             phrase_start_time = elapsed_time
+            phrase_stop_time = phrase_start_time
+            _tag_data("speech_start")
+            # if detection_callback is not None:
+            #     _callback_dict = detection_callback()
+            #     for _k, _v in _callback_dict.items():
+            #         print('->speech_start.' + _k, _v)
+            #         _metadata_detected_dict['speech_start.' + _k] = _v
+            self.logger.debug("LISTEN: speech_start, metadata: {}".format(self._audio_metadata_to_str(_metadata_detected_dict)))
             while True:
                 # handle phrase being too long by cutting off the audio
                 elapsed_time += seconds_per_buffer
                 if phrase_time_limit and elapsed_time - phrase_start_time > phrase_time_limit:
-                    self.logger.debug("LISTEN: phrase limit exceeded: elapsed {}, started at {} ".format(elapsed_time, phrase_start_time))
+                    self.logger.debug("LISTEN: phrase limit exceeded: elapsed {}, started at {} ".format(elapsed_time,
+                                                                                                         phrase_start_time))
                     break
-
                 buffer = source.stream.read(source.CHUNK)
                 self.logger.debug("LISTEN: N chunk to read={}, actually read={}".format(source.CHUNK, len(buffer)))
-                if len(buffer) == 0: 
+                if len(buffer) == 0:
                     self.logger.debug("LISTEN: reached end of the stream")
                     break  # reached end of the stream
                 frames.append(buffer)
@@ -769,32 +1024,113 @@ class Recognizer(AudioSource):
 
                 # check if speaking has stopped for longer than the pause threshold on the audio input
                 energy = audioop.rms(buffer, source.SAMPLE_WIDTH)  # unit energy of the audio signal within the buffer
-                
+
                 if energy > self.energy_threshold:
+                    _tag_data("speech_end")  # or last active speech frame
+                    # if detection_callback is not None:
+                    #     _callback_dict = detection_callback()
+                    #     for _k, _v in _callback_dict.items():
+                    #         print('->speech_end.' + _k, _v)
+                    #         _metadata_detected_dict['speech_end.' + _k] = _v
+                    self.logger.debug("LISTEN: energy > self.energy_threshold, update speech_end: metadata: {}".format(self._audio_metadata_to_str(_metadata_detected_dict)))
                     pause_count = 0
+                    phrase_stop_time = elapsed_time
                 else:
                     pause_count += 1
-                self.logger.debug("LISTEN: chunk [{} time,{} energy] - phrase_count {} - pause_count {} ".format(elapsed_time - phrase_start_time, energy, phrase_count, pause_count))
-				
+
+                self.logger.debug("LISTEN: chunk [{} time,{} energy] - phrase_count {} - pause_count {} ".format(
+                    elapsed_time - phrase_start_time, energy, phrase_count, pause_count))
+
                 if pause_count > pause_buffer_count:  # end of the phrase
-                    self.logger.debug("LISTEN: end of the phrase. pause_count {} > {} ".format(pause_count, pause_buffer_count))
+                    self.logger.debug("LISTEN: PAUSE DETECTED (pause_count={}), metadata: {}".format(pause_count, self._audio_metadata_to_str(_metadata_detected_dict)))
                     break
 
             # check how long the detected phrase is, and retry listening if the phrase is too short
             phrase_count -= pause_count  # exclude the buffers for the pause before the phrase
-            self.logger.debug("PHRASE COUNT: phrase_count ({}) >= phrase_buffer_count ({}) or len(buffer) {}==0 ".format(phrase_count, phrase_buffer_count, len(buffer)))
-            if phrase_count >= phrase_buffer_count or len(buffer) == 0: 
-                self.logger.debug("PHRASE COUNT: phrase is long enough or we've reached the end of the stream, so stop listening.")
+            self.logger.debug(
+                "PHRASE COUNT: phrase_count ({}) >= phrase_buffer_count ({}) or len(buffer) {}==0 ".format(phrase_count,
+                                                                                                           phrase_buffer_count,
+                                                                                                           len(buffer)))
+            if phrase_count >= phrase_buffer_count or len(buffer) == 0:
+                self.logger.debug("PHRASE COUNT: PHRASE END, phrase is long enough. metadata: {}".format(self._audio_metadata_to_str(_metadata_detected_dict)))
                 break  # phrase is long enough or we've reached the end of the stream, so stop listening
             else:
                 self.logger.debug("PHRASE COUNT: Still frame to decode Next iteration")
 
-        # obtain frame data
-        for i in range(pause_count - non_speaking_buffer_count): frames.pop()  # remove extra non-speaking frames at the end
+            # obtain frame data
+        for i in range(
+            pause_count - non_speaking_buffer_count): frames.pop()  # remove extra non-speaking frames at the end
         frame_data = b"".join(frames)
-        self.logger.info("Returns from acquisition phrase duration: {} - phrase_count={} pause_count={} phrase_buffer_count={}".format(elapsed_time - phrase_start_time, phrase_count, pause_count, phrase_buffer_count))
-		
-        return AudioData(frame_data, source.SAMPLE_RATE, source.SAMPLE_WIDTH)
+        self.logger.debug(
+            "Returns from acquisition phrase duration: {} - phrase_count={} pause_count={} phrase_buffer_count={}".format(
+                phrase_stop_time - phrase_start_time, phrase_count, pause_count, phrase_buffer_count))
+
+        retval = AudioData(frame_data, source.SAMPLE_RATE, source.SAMPLE_WIDTH)
+        retval.add_metadata(previous_audio.metadata)
+        retval.add_metadata(_metadata_detected_dict)
+        self.logger.debug("Acquired sentence in {}s, saved {}s of audio, metadata: {}".format(elapsed_time,
+                                                                                      retval.length,
+                                                                                      self._audio_metadata_to_str(
+                                                                                          _metadata_detected_dict)))
+        return retval
+
+
+class Recognizer(AudioSource):
+    def __init__(self, snowboy_configuration=None):
+        """
+        Creates a new ``Recognizer`` instance, which represents a collection of speech recognition functionality.
+        The ``snowboy_configuration`` parameter allows integration with `Snowboy <https://snowboy.kitt.ai/>`__,
+         an offline, high-accuracy, power-efficient hotword recognition engine.
+         When used, this function will pause until Snowboy detects a hotword, after which it will unpause.
+         This parameter should either be ``None`` to turn off Snowboy support, or a tuple of the form ``(SNOWBOY_LOCATION, LIST_OF_HOT_WORD_FILES)``,
+         where ``SNOWBOY_LOCATION`` is the path to the Snowboy root directory, and ``LIST_OF_HOT_WORD_FILES`` is a list of paths to
+         Snowboy hotword configuration files (`*.pmdl` or `*.umdl` format).
+        """
+		# TODO: these should be configurable!
+        self.energy_threshold = 700 #300  # minimum audio energy to consider for recording
+        self.dynamic_energy_threshold = True
+        self.dynamic_energy_adjustment_damping = 0.15
+        self.dynamic_energy_ratio = 1.5
+        self.pause_threshold = 0.8  # seconds of non-speaking audio before a phrase is considered complete
+        self.operation_timeout = None  # seconds after an internal operation (e.g., an API request) starts before it times out, or ``None`` for no timeout
+
+        self.phrase_threshold = 0.3  # minimum seconds of speaking audio before we consider the speaking audio a phrase - values below this are ignored (for filtering out clicks and pops)
+        self.non_speaking_duration = 0.5  # seconds of non-speaking audio to keep on both sides of the recording
+        self.logger = logging.getLogger(name="Recognizer")
+        self.logger.setLevel(logging.INFO)
+        self.set_sphinx_params()  # pre init sphinx with default behavioral parameters
+        self.snowboy_configuration = None
+        if snowboy_configuration is not None:
+            assert os.path.isfile(os.path.join(snowboy_configuration[0],
+                                               "snowboydetect.py")), "``snowboy_configuration[0]`` must be a Snowboy root directory containing ``snowboydetect.py``"
+            for hot_word_file in snowboy_configuration[1]:
+                assert os.path.isfile(
+                    hot_word_file), "``snowboy_configuration[1]`` must be a list of Snowboy hot word configuration files"
+            self.snowboy_configuration = snowboy_configuration
+
+
+    def record(self, source, duration=None, offset=None):
+        """
+        Records up to ``duration`` seconds of audio from ``source`` (an ``AudioSource`` instance) starting at ``offset`` (or at the beginning if not specified) into an ``AudioData`` instance, which it returns.
+        If ``duration`` is not specified, then it will record until there is no more audio input.
+        """
+        sl = SpeechListener()
+        return sl.listen(source, source, duration=duration, offset=offset)
+
+
+
+    def listen(self, source, timeout=None, phrase_time_limit=None, snowboy_configuration=None):
+        """
+        Records a single phrase from ``source`` (an ``AudioSource`` instance) into an ``AudioData`` instance, which it returns.
+        This is done by waiting until the audio has an energy above ``recognizer_instance.energy_threshold`` (the user has started speaking), and then recording until it encounters ``recognizer_instance.pause_threshold`` seconds of non-speaking or there is no more audio input. The ending silence is not included.
+        The ``timeout`` parameter is the maximum number of seconds that this will wait for a phrase to start before giving up and throwing an ``speech_recognition.WaitTimeoutError`` exception. If ``timeout`` is ``None``, there will be no wait timeout.
+        The ``phrase_time_limit`` parameter is the maximum number of seconds that this will allow a phrase to continue before stopping and returning the part of the phrase processed before the time limit was reached. The resulting audio will be the phrase cut off at the time limit. If ``phrase_timeout`` is ``None``, there will be no phrase time limit.
+        The ``snowboy_configuration`` parameter allows integration with `Snowboy <https://snowboy.kitt.ai/>`__, an offline, high-accuracy, power-efficient hotword recognition engine. When used, this function will pause until Snowboy detects a hotword, after which it will unpause. This parameter should either be ``None`` to turn off Snowboy support, or a tuple of the form ``(SNOWBOY_LOCATION, LIST_OF_HOT_WORD_FILES)``, where ``SNOWBOY_LOCATION`` is the path to the Snowboy root directory, and ``LIST_OF_HOT_WORD_FILES`` is a list of paths to Snowboy hotword configuration files (`*.pmdl` or `*.umdl` format).
+        This operation will always complete within ``timeout + phrase_timeout`` seconds if both are numbers, either by returning the audio data, or by raising a ``speech_recognition.WaitTimeoutError`` exception.
+        """
+        sl = SpeechListener()
+        return sl.listen( source, timeout=timeout, phrase_time_limit=phrase_time_limit, snowboy_configuration=snowboy_configuration)
+
 
     def listen_in_background(self, source, callback, phrase_time_limit=None):
         """
@@ -803,28 +1139,8 @@ class Recognizer(AudioSource):
         Phrase recognition uses the exact same mechanism as ``recognizer_instance.listen(source)``. The ``phrase_time_limit`` parameter works in the same way as the ``phrase_time_limit`` parameter for ``recognizer_instance.listen(source)``, as well.
         The ``callback`` parameter is a function that should accept two parameters - the ``recognizer_instance``, and an ``AudioData`` instance representing the captured audio. Note that ``callback`` function will be called from a non-main thread.
         """
-        assert isinstance(source, AudioSource), "Source must be an audio source"
-        running = [True]
-
-        def threaded_listen():
-            with source as s:
-                while running[0]:
-                    try:  # listen for 1 second, then check again if the stop function has been called
-                        audio = self.listen(s, 1, phrase_time_limit)
-                    except WaitTimeoutError:  # listening timed out, just try again
-                        pass
-                    else:
-                        if running[0]: callback(self, audio)
-
-        def stopper(wait_for_stop=True):
-            running[0] = False
-            if wait_for_stop:
-                listener_thread.join()  # block until the background thread is done, which can take around 1 second
-
-        listener_thread = threading.Thread(target=threaded_listen)
-        listener_thread.daemon = True
-        listener_thread.start()
-        return stopper
+        sl = SpeechListener()  # TODO: split of listen
+        return sl.listen_in_background(source, callback, phrase_time_limit=phrase_time_limit)
 
     def set_sphinx_params(self, language="en-US", keyword_entries=None, grammar=None):
         """
@@ -942,7 +1258,7 @@ class Recognizer(AudioSource):
         # return results
         hypothesis = self._decoder.hyp()
         self.logger.debug("[Exec in {}s]recognize_sphinx.decode. End. hypothesis.str={}".format(_tp.add_time('hypothesis'), hypothesis.hypstr if hypothesis is not None else "no transcriptions available"))
-        self.logger.info(str(_tp))
+        self.logger.debug(str(_tp))
         if hypothesis is not None: return hypothesis.hypstr
         raise UnknownValueError()  # no transcriptions available
 
