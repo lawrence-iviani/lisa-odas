@@ -72,7 +72,7 @@ class OdasRaw(AudioSource):
     def __init__(self, audio_queue, sample_rate=16000, chunk_size=1024, nbits=16):
         assert audio_queue is not None and isinstance(audio_queue, Queue), "Not a valid data queue in input"
         assert sample_rate is None or (
-                    isinstance(sample_rate, int) and sample_rate > 0), "Sample rate must be None or a positive integer"
+                isinstance(sample_rate, int) and sample_rate > 0), "Sample rate must be None or a positive integer"
         assert isinstance(chunk_size, int) and chunk_size > 0, "Chunk size must be a positive integer"
         assert isinstance(nbits, int) and nbits in [8, 16, 24, 32], "bits must be one of 8,16,24,32"
 
@@ -134,7 +134,7 @@ class Microphone(AudioSource):
     def __init__(self, device_index=None, sample_rate=None, chunk_size=1024):
         assert device_index is None or isinstance(device_index, int), "Device index must be None or an integer"
         assert sample_rate is None or (
-                    isinstance(sample_rate, int) and sample_rate > 0), "Sample rate must be None or a positive integer"
+                isinstance(sample_rate, int) and sample_rate > 0), "Sample rate must be None or a positive integer"
         assert isinstance(chunk_size, int) and chunk_size > 0, "Chunk size must be a positive integer"
 
         # set up PyAudio
@@ -459,7 +459,7 @@ class AudioData(object):
         """
         assert convert_rate is None or convert_rate > 0, "Sample rate to convert to must be a positive integer"
         assert convert_width is None or (
-                    convert_width % 1 == 0 and 1 <= convert_width <= 4), "Sample width to convert to must be between 1 and 4 inclusive"
+                convert_width % 1 == 0 and 1 <= convert_width <= 4), "Sample width to convert to must be between 1 and 4 inclusive"
 
         raw_data = self.frame_data
 
@@ -565,7 +565,7 @@ class AudioData(object):
         Writing these bytes directly to a file results in a valid `FLAC file <https://en.wikipedia.org/wiki/FLAC>`__.
         """
         assert convert_width is None or (
-                    convert_width % 1 == 0 and 1 <= convert_width <= 3), "Sample width to convert to must be between 1 and 3 inclusive"
+                convert_width % 1 == 0 and 1 <= convert_width <= 3), "Sample width to convert to must be between 1 and 3 inclusive"
 
         if self.sample_width > 3 and convert_width is None:  # resulting WAV data would be 32-bit, which is not convertable to FLAC using our encoder
             convert_width = 3  # the largest supported sample width is 24-bit, so we'll limit the sample width to that
@@ -732,7 +732,7 @@ class SpeechListener(AudioSource):
         # Audio Detection
         while True:
             frames = collections.deque()
-
+            # Wakeup world
             if snowboy_configuration is None:
                 # store audio input until the phrase starts
                 while True:
@@ -740,7 +740,6 @@ class SpeechListener(AudioSource):
                     elapsed_time += seconds_per_buffer
                     if timeout and elapsed_time > timeout:
                         raise WaitTimeoutError("DETECTION: listening timed out while waiting for phrase to start")
-
                     buffer = source.stream.read(source.CHUNK)
                     self.logger.debug(
                         "DETECTION: N chunk to read={} samples, buffer size={} bytes".format(source.CHUNK, len(buffer)))
@@ -832,7 +831,7 @@ class SpeechListener(AudioSource):
 
         # obtain frame data
         for i in range(
-            pause_count - non_speaking_buffer_count): frames.pop()  # remove extra non-speaking frames at the end
+                pause_count - non_speaking_buffer_count): frames.pop()  # remove extra non-speaking frames at the end
         frame_data = b"".join(frames)
         self.logger.debug(
             "Returns from acquisition phrase duration: {} - phrase_count={} pause_count={} phrase_buffer_count={}".format(
@@ -871,6 +870,11 @@ class SpeechListener(AudioSource):
         return stopper
 
     def _detection_constants(self, source):
+        """
+        Transform recognition parameters in number of counting buffers
+        :param source:
+        :return:
+        """
         seconds_per_buffer = float(source.CHUNK) / source.SAMPLE_RATE
         pause_buffer_count = int(math.ceil(
             self.pause_threshold / seconds_per_buffer))  # number of buffers of non-speaking audio during a phrase, before the phrase should be considered complete
@@ -1152,7 +1156,7 @@ class SpeechListener(AudioSource):
 
 
 class Recognizer(AudioSource):
-    def __init__(self, snowboy_configuration=None):
+    def __init__(self, snowboy_configuration=None, sphinx_language="en-US"):
         """
         Creates a new ``Recognizer`` instance, which represents a collection of speech recognition functionality.
         The ``snowboy_configuration`` parameter allows integration with `Snowboy <https://snowboy.kitt.ai/>`__,
@@ -1174,7 +1178,7 @@ class Recognizer(AudioSource):
         self.non_speaking_duration = 0.5  # seconds of non-speaking audio to keep on both sides of the recording
         self.logger = logging.getLogger(name="Recognizer")
         self.logger.setLevel(logging.INFO)
-        self.set_sphinx_params()  # pre init sphinx with default behavioral parameters
+        self.set_sphinx_params(language=sphinx_language)  # pre init sphinx with default behavioral parameters
         self.snowboy_configuration = None
         if snowboy_configuration is not None:
             assert os.path.isfile(os.path.join(snowboy_configuration[0],
@@ -1400,7 +1404,7 @@ class Recognizer(AudioSource):
         # return results
         if show_all: return actual_result
         if not isinstance(actual_result, dict) or len(
-            actual_result.get("alternative", [])) == 0: raise UnknownValueError()
+                actual_result.get("alternative", [])) == 0: raise UnknownValueError()
 
         if "confidence" in actual_result["alternative"]:
             # return alternative with highest confidence score

@@ -27,11 +27,12 @@ logger = logging.getLogger(name="LISA Speech Recognition")
 logger.setLevel(logging.DEBUG)
 
 # Specific Processing Parameters
-RECOGNITION_METHOD = 'google'  # 'sphinx', 'all'
-
+RECOGNITION_METHOD = 'all'  # 'sphinx', 'all' , 'google'
+LANGUAGE = 'de-DE'  # options: 'en-US' 'it-IT' 'de-DE'
+# TODO: wake up word
 # Params for collecting queue from ODAS callbacks
 MAX_QUEUE_SIZE = 10
-MEDIAN_WEIGHTS = [1/4, 1/2, 1/4]  # Set to none to skip
+MEDIAN_WEIGHTS = [1/4, 1/2, 1/4]  # Set to none to skip, apply a median filter
 # GLOBAL VARIABLES USED TO SHARE INFORMATION AMONG THREADS
 SSL_queue = [deque(maxlen=len(MEDIAN_WEIGHTS)) for _q in range(MAX_ODAS_SOURCES)]
 SST_queue = [deque(maxlen=len(MEDIAN_WEIGHTS)) for _q in range(MAX_ODAS_SOURCES)]
@@ -85,8 +86,7 @@ def callback_SST(pSST_struct):
                 SST_queue[i].append((sst_str.timestamp / 100.0, deepcopy(sst_str.src[i])))
                 x = y = z = activity = ts = 0.0
                 id = []
-                q_len = len(SST_queue[i])
-                for ii in range(q_len):
+                for ii in range(len(SST_queue[i])):
                     w = MEDIAN_WEIGHTS[ii]
                     ts = ts + SST_queue[i][ii][0] * w
                     x = x + SST_queue[i][ii][1].x * w
@@ -95,7 +95,7 @@ def callback_SST(pSST_struct):
                     activity = activity + SST_queue[i][ii][1].activity * w
                     id.append(SST_queue[i][ii][1].z)
                 id = np.argmax(np.bincount(id))  # The more probable
-                SST_latest[i] = (ts, SST_src_struct(x=x,y=y,z=z,activity=activity, id=id, tag=SST_queue[i][q_len][1].tag)) # For tag take the latest inserted
+                SST_latest[i] = (ts, SST_src_struct(x=x,y=y,z=z,activity=activity, id=id, tag=SST_queue[i][-1][1].tag)) # For tag take the latest inserted
             #print("SSL_latest[{}]: {}".format(i, SST_latest[i]))
 
         except Full:
@@ -106,8 +106,8 @@ def callback_SST(pSST_struct):
 @callback_SSS_S_func
 def callback_SSS_S(n_bytes, x):
     """"
-	Called by the relative odas switcher stream, save in the proper SSS_queue[] the received data.
-	"""
+    Called by the relative odas switcher stream, save in the proper SSS_queue[] the received data.
+    """
     # print("+++ Python SSS_S {} bytes in x={}".format(n_bytes, x))
     shp = (n_bytes // BYTES_PER_SAMPLE // MAX_ODAS_SOURCES, MAX_ODAS_SOURCES)
     n_frames = shp[0] // HOP_SIZE_INCOME_STREAM  # I assume shp[0] is always a multiple integer, which in my understanding seems to be the case with odas
@@ -139,8 +139,7 @@ def thread_start_odas_switcher():
     retval = lib_lisa_rcv.main_loop()
     print("Exit thread odas loop with {}".format(retval))
     threading.main_thread()  # _thread.interrupt_main()
-    os._exit(
-        retval)  # exit the main thread as well, brutal but it works if the odas dies (the entire app is switched off)
+    os._exit(retval)  # exit the main thread as well, brutal but it works if the odas dies (the entire app is switched off)
 
 
 def recognize_worker(audio_queue, recognizer):
@@ -156,11 +155,14 @@ def recognize_worker(audio_queue, recognizer):
                                                                                        len(audio.frame_data) / (
                                                                                                audio.sample_rate * audio.sample_width)))
 
-        def _recognize(audio, func, tag, actual_id):
+        def _recognize(audio, func, tag, actual_id, language=None):
             try:
                 logger.debug("{}-{} start processing ".format(actual_id, tag))
                 _start_time = time.time()
-                _response = func(audio)
+                if language is None:
+                    _response = func(audio,)
+                else:
+                    _response = func(audio, language=language)
                 _end_time = time.time() - _start_time
                 logger.info("{}-{}-{} speech len {}s recognized in {}s: |{}|".format("+-" * 2, actual_id, tag,
                                                                                      audio.length, _end_time,
@@ -174,10 +176,10 @@ def recognize_worker(audio_queue, recognizer):
 
         if RECOGNITION_METHOD == 'google' or RECOGNITION_METHOD == 'all':  # 'sphinx', 'all'
             google_thread = threading.Thread(target=_recognize,
-                                             args=(audio, recognizer.recognize_google, 'google', actual_id))
+                                             args=(audio, recognizer.recognize_google, 'google', actual_id, LANGUAGE))
             google_thread.daemon = True
             google_thread.start()
-        elif RECOGNITION_METHOD == 'sphinx' or RECOGNITION_METHOD == 'all':
+        if RECOGNITION_METHOD == 'sphinx' or RECOGNITION_METHOD == 'all':
             sphinx_thread = threading.Thread(target=_recognize,
                                              args=(audio, recognizer.recognize_sphinx, 'sphinx', actual_id))
             sphinx_thread.daemon = True
@@ -204,7 +206,7 @@ def source_listening(source_id):
     # The processing queue between a recognizer thread and received data identified as speech
     # This process is a sequetial  job with a long execution time , TODO: a possible check or maxlen could be added, for safety
     recognizer_queue = Queue()
-    r = sr.Recognizer()
+    r = sr.Recognizer(sphinx_language=LANGUAGE)
     sl = sr.SpeechListener()
     recognize_thread = threading.Thread(target=recognize_worker, args=(recognizer_queue, r,))
     recognize_thread.daemon = True
@@ -239,9 +241,12 @@ if __name__ == '__main__':
         listener_threads.append(_th)
         sleep(.25)
     try:
+        odas_th = threading.Thread(target=thread_start_odas_switcher, )
+        odas_th.start()
+        odas_th.join()
         # starting acquisition and wait
-        retval = lib_lisa_rcv.main_loop()
-        print("Exit odas loop with {}".format(retval))
+        #retval = lib_lisa_rcv.main_loop()
+        # print("Exit odas loop with {}".format(retval))
     except KeyboardInterrupt:  # allow Ctrl + C to shut down the program
         print("Exit odas loop with KeyboardInterrupt")
 
