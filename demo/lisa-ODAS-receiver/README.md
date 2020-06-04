@@ -1,30 +1,6 @@
-# Running ODAS using a MATRIX Creator/Voice board
+# Running ODAS using a MATRIX Creator/Voice board or 
 
-## Install Matrix Software
-
-```batch
-# Add repo and key
-curl https://apt.matrix.one/doc/apt-key.gpg | sudo apt-key add -
-echo "deb https://apt.matrix.one/raspbian $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/matrixlabs.list
-
-# Update packages and install
-sudo apt-get update
-sudo apt-get upgrade
-
-# Installation
-sudo apt install matrixio-creator-init
-sudo apt install libmatrixio-creator-hal
-sudo apt install libmatrixio-creator-hal-dev
-sudo reboot
-
-```
-
-After reboot, install the MATRIX Kernel Modules as follows:
-
-```batch
-sudo apt install matrixio-kernel-modules
-sudo reboot
-```
+We assumed you have installed the necessary sw for the relative board (see INSTALL)
 
 ## Install ODAS Prerequisites
 
@@ -58,8 +34,16 @@ make
 
 ## Run the demo!
 
-You need to run two applications. The `odaslive` that performs all the cool audio processing and the `matrix-odas` that receives the result and draws it in the MATRIX Everloop.
+You need to run two applications. The `odaslive` that performs all the cool audio processing and the `matrix-odas` that receives the result and draws it in the MATRIX Everloop, and perform a basic speech recognition (TODO: going to change, in evolution).
 
+In one terminal, run one of the possivle demo. (TODO: a number of requirements should be satisfied)
+```batch
+cd odas-switcher/demo/lisa_py_processing_engine 
+python3 lisa_speech_recognition.py
+```
+
+In a second terminal (order matter!)
+Adapt for other board, 
 ```batch
 cd ~/odas/bin
 ./matrix-odas &
