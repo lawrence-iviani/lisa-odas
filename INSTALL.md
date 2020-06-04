@@ -114,3 +114,13 @@ TODO: here at the moment there are two ideas.
 1. Develop a service compatible with [rhasspy voltron](https://rhasspy.github.io/rhasspy-voltron/) a collection of [rhasspy service managed with supervisord](https://github.com/rhasspy/rhasspy-voltron#rhasspy-voltron)
 2. Start with the usual [rhasspy guide](https://rhasspy.readthedocs.io/en/latest/) and check the [lisa-ODAS-receiver README](https://github.com/lawrence-iviani/lisa-odas/blob/master/demo/lisa-ODAS-receiver/README.md)
 
+If you experience an error regarding libttspico-utils, the necessary .deb files have to be manually downloaded and installed from http://archive.raspberrypi.org/debian/pool/main/s/svox/. 
+You will need libttspico-utils and libttspico0 packages with matching versions.
+
+Adding non-free repos, (for manual installation check [link](https://bugs.launchpad.net/raspbian/+bug/1835974)
+```batch
+wget -q https://ftp-master.debian.org/keys/release-10.asc -O- | apt-key add -
+echo "deb http://deb.debian.org/debian buster non-free" >> /etc/apt/sources.list
+apt-get update
+apt-get install libttspico0
+```
