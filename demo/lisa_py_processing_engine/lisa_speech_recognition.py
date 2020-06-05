@@ -26,10 +26,16 @@ from lisa.utils import LOGGING_FORMATTER
 logger = logging.getLogger(name="LISA Speech Recognition")
 logger.setLevel(logging.DEBUG)
 
-# Specific Processing Parameters
+# Specific Processing Parameters, should be configurable as parameters
+RECOGNITION_METHODS = ['sphinx', 'all' , 'google']
+AVAILABLE_LANGUAGES = ['en-US', 'it-IT', 'de-DE']
+
+# USED AS GLOBAL VAR
 RECOGNITION_METHOD = 'all'  # 'sphinx', 'all' , 'google'
-LANGUAGE = 'de-DE'  # options: 'en-US' 'it-IT' 'de-DE'
+LANGUAGE = 'en-US'  # options: 'en-US' 'it-IT' 'de-DE'
 # TODO: wake up word
+
+
 # Params for collecting queue from ODAS callbacks
 MAX_QUEUE_SIZE = 10
 MEDIAN_WEIGHTS = [1/4, 1/2, 1/4]  # Set to none to skip, apply a median filter
@@ -227,7 +233,23 @@ def source_listening(source_id):
                 recognizer_queue.put(processed_audio_data)
 
 
+# PARSER OPTION
+import argparse
+parser = argparse.ArgumentParser(description='Running option for Lisa receiver')
+
+parser.add_argument('-l', '--language', dest='language', action='store', default=LANGUAGE,
+                    choices=AVAILABLE_LANGUAGES, help='Default language: ' + str(LANGUAGE))
+parser.add_argument('-r', '--recognition', dest='recognition_method', action='store', default=RECOGNITION_METHOD,
+                    choices=RECOGNITION_METHODS, help='Default recognition method: ' + str(RECOGNITION_METHOD))
+
+
 if __name__ == '__main__':
+    args = parser.parse_args()
+    print("selected language: {}".format(args.language))
+    print("selected recognition_method: {}".format(args.recognition_method))
+    LANGUAGE = args.language
+    RECOGNITION_METHODS = args.recognition_method
+
     signal(SIGINT, handler)
     lib_lisa_rcv.register_callback_SST(callback_SST)
     lib_lisa_rcv.register_callback_SSL(callback_SSL)
@@ -244,6 +266,7 @@ if __name__ == '__main__':
         odas_th = threading.Thread(target=thread_start_odas_switcher, )
         odas_th.start()
         odas_th.join()
+        print("Exit odas thread")
         # starting acquisition and wait
         #retval = lib_lisa_rcv.main_loop()
         # print("Exit odas loop with {}".format(retval))
