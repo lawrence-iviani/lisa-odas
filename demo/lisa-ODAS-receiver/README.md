@@ -1,4 +1,5 @@
-# Running ODAS using a MATRIX Creator/Voice board or 
+# Running ODAS 
+(using a MATRIX Voice board or a Respeaker 4 Mic)
 
 We assumed you have installed the necessary sw for the relative board (see INSTALL)
 
