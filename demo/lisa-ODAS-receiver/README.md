@@ -34,7 +34,7 @@ make
 
 ## Run the demo!
 
-You need to run two applications. The `odaslive` that performs all the cool audio processing and the `matrix-odas` that receives the result and draws it in the MATRIX Everloop, and perform a basic speech recognition (TODO: going to change, in evolution).
+You need to run two applications. The `odaslive` that performs all the cool audio processing and the `lisa_speech_recognition` that receives the result and draws it in the MATRIX Everloop, and perform a basic speech recognition (TODO: going to change, in evolution).
 
 In one terminal, run one of the possivle demo. (TODO: a number of requirements should be satisfied)
 ```batch
@@ -47,7 +47,7 @@ Adapt for other board,
 ```batch
 cd ~/odas/bin
 ./matrix-odas &
-./odaslive -vc ../config/matrix-demo/matrix_voice.cfg
+  ./odaslive -vc ../config/matrix-lisa/matrix_voice_LISA_1.cfg
 ```
 
 Make some noise! ... you should see a blue lights indicating where the sound is coming from.
