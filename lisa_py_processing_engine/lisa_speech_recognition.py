@@ -1,8 +1,4 @@
-try:
-    from queue import Queue, Full  # Python 3 import
-except ImportError:
-    from Queue import Queue, Full  # Python 2 import
-
+from queue import Queue, Full  # Python 3 import
 import time
 import threading
 import numpy as np
@@ -13,6 +9,9 @@ import logging
 from _collections import deque
 
 import speech_recognition as sr
+import speech_recognition.batch_recognizer as batch_sr
+import speech_recognition.audio_sources as inputs_sources
+
 from lisa.lisa_switcher_bindings import callback_SSL_func, callback_SST_func, callback_SSS_S_func, lib_lisa_rcv
 from lisa.lisa_switcher_bindings import SSL_struct, SSL_src_struct, SST_struct, SST_src_struct
 from lisa.lisa_configuration import SST_TAG_LEN, MAX_ODAS_SOURCES, SAMPLE_RATE_INCOME_STREAM, HOP_SIZE_INCOME_STREAM, \
@@ -212,13 +211,13 @@ def source_listening(source_id):
     # The processing queue between a recognizer thread and received data identified as speech
     # This process is a sequetial  job with a long execution time , TODO: a possible check or maxlen could be added, for safety
     recognizer_queue = Queue()
-    r = sr.Recognizer(sphinx_language=LANGUAGE)
-    sl = sr.SpeechListener()
+    r = batch_sr.Recognizer(sphinx_language=LANGUAGE)
+    sl = batch_sr.SpeechListener()
     recognize_thread = threading.Thread(target=recognize_worker, args=(recognizer_queue, r,))
     recognize_thread.daemon = True
     recognize_thread.start()
-    with sr.OdasRaw(audio_queue=SSS_queue[source_id], sample_rate=SAMPLE_RATE_INCOME_STREAM,
-                    chunk_size=HOP_SIZE_INCOME_STREAM, nbits=N_BITS_INCOME_STREAM) as source:
+    with inputs_sources.OdasRaw(audio_queue=SSS_queue[source_id], sample_rate=SAMPLE_RATE_INCOME_STREAM,
+                        chunk_size=HOP_SIZE_INCOME_STREAM, nbits=N_BITS_INCOME_STREAM) as source:
         while True:  # repeatedly listen for phrases and put the resulting audio on the audio processing job queue
             # TODO SIGNAL THREADING FOR EXIT
             logger.info("\n*-*(source id {})*-* Start Listening ".format(source_id))

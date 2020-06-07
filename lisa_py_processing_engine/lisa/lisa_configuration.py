@@ -7,3 +7,4 @@ SST_TAG_LEN = 20  # as in common.h
 SAMPLE_RATE_INCOME_STREAM = 16000  # This the value defined as fs  in odas config sss separated or postfiltered
 HOP_SIZE_INCOME_STREAM = 128  # This the value defined as hopSize  in odas config sss separated or postfiltered
 N_BITS_INCOME_STREAM = 16  # This the value defined as nBits  in odas config sss separated or postfiltered
+ODAS_RCV_LIB = '../../lib/liblisarcv'  # the location of liblisarcv.so, wrapper for ODAS. Compiled from source in the same repos

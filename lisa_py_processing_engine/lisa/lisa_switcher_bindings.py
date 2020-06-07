@@ -3,12 +3,11 @@ import numpy.ctypeslib as npct
 import ctypes
 import os.path
 
-from lisa.lisa_configuration import SST_TAG_LEN, MAX_ODAS_SOURCES
+from lisa.lisa_configuration import SST_TAG_LEN, MAX_ODAS_SOURCES, ODAS_RCV_LIB
 
 pTag = ctypes.create_string_buffer(SST_TAG_LEN)
-print(pTag)
 
-lib_lisa_rcv = npct.load_library('../../../lib/liblisarcv', os.path.dirname(__file__))
+lib_lisa_rcv = npct.load_library(ODAS_RCV_LIB, os.path.dirname(__file__))
 lib_lisa_rcv.main_loop.restype = ctypes.c_int
 lib_lisa_rcv.main_loop.argtypes = None
 
