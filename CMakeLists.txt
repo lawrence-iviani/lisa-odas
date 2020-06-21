@@ -208,12 +208,12 @@ target_link_libraries(odas
 )
 
 add_executable(odaslive
-    demo/odaslive/main.c
-    demo/odaslive/configs.c
-    demo/odaslive/objects.c
-    demo/odaslive/parameters.c
-    demo/odaslive/profiler.c
-    demo/odaslive/threads.c
+    app/odaslive/main.c
+    app/odaslive/configs.c
+    app/odaslive/objects.c
+    app/odaslive/parameters.c
+    app/odaslive/profiler.c
+    app/odaslive/threads.c
 )
 
 target_link_libraries(odaslive
@@ -221,14 +221,14 @@ target_link_libraries(odaslive
 )
 
 
-#Add new DEMO based on matrix-odas
+#Add new app based on matrix-odas
 
 add_library(lisarcv SHARED
-	demo/lisa-ODAS-receiver/matrix_odas_receiver.cpp 
-	demo/lisa-ODAS-receiver/connection.cpp 
-	demo/lisa-ODAS-receiver/led_bus.cpp 
-	demo/lisa-ODAS-receiver/json_decoder.cpp 
-	demo/lisa-ODAS-receiver/python_wrapper.cpp 
+	app/lisa-ODAS-receiver/matrix_odas_receiver.cpp 
+	app/lisa-ODAS-receiver/connection.cpp 
+	app/lisa-ODAS-receiver/led_bus.cpp 
+	app/lisa-ODAS-receiver/json_decoder.cpp 
+	app/lisa-ODAS-receiver/python_wrapper.cpp 
 )
 
 target_link_libraries(lisarcv
@@ -238,7 +238,7 @@ target_link_libraries(lisarcv
 )
 
 add_executable(lisa-ODAS-receiver
-    demo/lisa-ODAS-receiver/main.cpp
+    app/lisa-ODAS-receiver/main.cpp
 )
 
 target_link_libraries(lisa-ODAS-receiver
@@ -247,7 +247,7 @@ target_link_libraries(lisa-ODAS-receiver
 )
 
 add_executable(odasserver
-    demo/odasserver/main.c
+    app/odasserver/main.c
 )
 target_link_libraries(odasserver
     odas
