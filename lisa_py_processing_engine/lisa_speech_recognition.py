@@ -7,6 +7,8 @@ from sys import exit
 from time import sleep
 import logging
 from _collections import deque
+import os
+import deepspeech
 
 import speech_recognition as sr
 import speech_recognition.batch_recognizer as batch_sr
@@ -34,6 +36,8 @@ RECOGNITION_METHOD = 'all'  # 'sphinx', 'all' , 'google'
 LANGUAGE = 'en-US'  # options: 'en-US' 'it-IT' 'de-DE'
 # TODO: wake up word
 
+VAD_AGGRESSIVENESS = 3 # 0 - 3 , 0 being the least aggressive about filtering out non-speech, 3 the most aggressive.
+RT_SPEECH_PROCESSING = False
 
 # Params for collecting queue from ODAS callbacks
 MAX_QUEUE_SIZE = 10
@@ -53,6 +57,7 @@ from copy import deepcopy
 @callback_SSL_func
 def callback_SSL(pSSL_struct):
     ssl_str = pSSL_struct[0]
+    print('callback_SSL')
     # msg = ["+++ Python SSL Struct ts={}".format(ssl_str.timestamp)]
     # TODO: use timestamp for checking insertion??
     for i in range(0, MAX_ODAS_SOURCES):
@@ -80,6 +85,7 @@ def callback_SSL(pSSL_struct):
 
 @callback_SST_func
 def callback_SST(pSST_struct):
+    print('callback_SST')
     sst_str = pSST_struct[0]
     for i in range(0, MAX_ODAS_SOURCES):
         try:
@@ -113,6 +119,7 @@ def callback_SSS_S(n_bytes, x):
     """"
     Called by the relative odas switcher stream, save in the proper SSS_queue[] the received data.
     """
+    print('callback_SSS_S')
     # print("+++ Python SSS_S {} bytes in x={}".format(n_bytes, x))
     shp = (n_bytes // BYTES_PER_SAMPLE // MAX_ODAS_SOURCES, MAX_ODAS_SOURCES)
     n_frames = shp[0] // HOP_SIZE_INCOME_STREAM  # I assume shp[0] is always a multiple integer, which in my understanding seems to be the case with odas
@@ -192,6 +199,52 @@ def recognize_worker(audio_queue, recognizer):
 
         audio_queue.task_done()  # mark the audio processing job as completed in the queue
 
+#
+#
+# BEAM_WIDTH = 500 # Beam width used in the CTC decoder when building candidate transcriptions. Default: {BEAM_WIDTH}
+# DEFAULT_SAMPLE_RATE = 16000 # Input device sample rate. Default: {DEFAULT_SAMPLE_RATE}. Your device may require 44100.
+# LM_ALPHA = 0.75 # The alpha hyperparameter of the CTC decoder. Language Model weight. Default: {LM_ALPHA}
+# LM_BETA = 1.85 # The beta hyperparameter of the CTC decoder. Word insertion bonus. Default: {LM_BETA}
+# VAD_AGGRESSIVENESS = 3 # "Set aggressiveness of VAD: an integer between 0 and 3, 0 being the least aggressive about
+#                        # filtering out non-speech, 3 the most aggressive. Default: 3"
+# MODEL_DIR = '/home/pi/dev/deepspeech-0.6.1-models/' # "Path to the model (protocol buffer binary file, or entire directory containing all standard-named files for model)"
+# LM_BINARY = 'lm.binary' # "Path to the language model binary file. Default: lm.binary"
+# TRIE = 'trie' # Path to the language model trie file created with native_client/generate_trie. Default: trie
+#
+#
+# class rt_params:
+#     vad_aggressiveness = VAD_AGGRESSIVENESS
+#     model = MODEL_DIR
+#     lm = LM_BINARY
+#     trie = TRIE
+#     rate = DEFAULT_SAMPLE_RATE
+#     lm_alpha = LM_ALPHA
+#     lm_beta = LM_BETA
+#     beam_width = BEAM_WIDTH
+#
+#
+# deepspeech_model = None
+
+def get_rt_model():
+    global deepspeech_model
+    if deepspeech_model is None:
+        params_rt = rt_params()
+        # Load DeepSpeech model
+        if os.path.isdir(params_rt.model):
+            model_dir = params_rt.model
+            params_rt.model = os.path.join(model_dir, 'output_graph.tflite')
+            params_rt.lm = os.path.join(model_dir, params_rt.lm)
+            params_rt.trie = os.path.join(model_dir, params_rt.trie)
+
+        print('Initializing model...')
+        logging.info("params_rt.model: %s", params_rt.model)
+        deepspeech_model = deepspeech.Model(params_rt.model, params_rt.beam_width)
+        if params_rt.lm and params_rt.trie:
+            logging.info("params_rt.lm: %s", params_rt.lm)
+            logging.info("params_rt.trie: %s", params_rt.trie)
+            deepspeech_model.enableDecoderWithLM(params_rt.lm, params_rt.trie, params_rt.lm_alpha, params_rt.lm_beta)
+    return deepspeech_model, rt_params()
+
 
 def source_listening(source_id):
     """"
@@ -210,26 +263,60 @@ def source_listening(source_id):
 
     # The processing queue between a recognizer thread and received data identified as speech
     # This process is a sequetial  job with a long execution time , TODO: a possible check or maxlen could be added, for safety
-    recognizer_queue = Queue()
-    r = batch_sr.Recognizer(sphinx_language=LANGUAGE)
-    sl = batch_sr.SpeechListener()
-    recognize_thread = threading.Thread(target=recognize_worker, args=(recognizer_queue, r,))
-    recognize_thread.daemon = True
-    recognize_thread.start()
+    if source_id > 0: return  # do nothignproperty
+    if RT_SPEECH_PROCESSING:
+        if source_id>0: return # do nothign
+        sl_rt = batch_sr.SpeechListener_RT(aggressiveness=VAD_AGGRESSIVENESS)
+        model, params_rt = get_rt_model()
+    else:
+        recognizer_queue = Queue()
+        r = batch_sr.Recognizer(sphinx_language=LANGUAGE)
+        sl = batch_sr.SpeechListener()
+        recognize_thread = threading.Thread(target=recognize_worker, args=(recognizer_queue, r,))
+        recognize_thread.daemon = True
+        recognize_thread.start()
+    
+    print("Start odas")
     with inputs_sources.OdasRaw(audio_queue=SSS_queue[source_id], sample_rate=SAMPLE_RATE_INCOME_STREAM,
                         chunk_size=HOP_SIZE_INCOME_STREAM, nbits=N_BITS_INCOME_STREAM) as source:
-        while True:  # repeatedly listen for phrases and put the resulting audio on the audio processing job queue
-            # TODO SIGNAL THREADING FOR EXIT
-            logger.info("\n*-*(source id {})*-* Start Listening ".format(source_id))
-            detected_audio_data = sl.detect_speech_activity(source, detection_callback=_get_postion_message)
-            detected_audio_data.add_metadata({"ODAS_source_ID": source_id})
-            logger.info("\n*-*(source id {})*-* Speech DETECTED {}".format(source_id, detected_audio_data))
-            if detected_audio_data:
-                # TODO: idea, here the speaker should be also identified
-                processed_audio_data = sl.process_speech(source, detected_audio_data, detection_callback=_get_postion_message)
-                logger.info("\n*-*(source id {})*-* Speech COMPLETED: {}".format(source_id, processed_audio_data))
-                # add to the recognition process
-                recognizer_queue.put(processed_audio_data)
+        if RT_SPEECH_PROCESSING:
+            # TODO, propertymodify accordinglyproperty
+            print('1. sl_rt.my_listen()')
+            frames = sl_rt.my_listen(source, timeout=None, phrase_time_limit=None, padding_ms=300, ratio=0.75)
+            #   frames = vad_audio.vad_collector()
+            print('2. model.createStream()')
+            stream_context = model.createStream()
+            # wav_data = bytearray()property
+            for frame in frames:
+                if frame is not None:
+                    #if spinner: spinner.start()
+                    logging.debug("streaming frame")
+                    model.feedAudioContent(stream_context, np.frombuffer(frame, np.int16))
+                    # if ARGS.savewav: wav_data.extend(frame)
+                else:
+                    #if spinner: spinner.stop()
+                    logging.debug("end utterence")
+                    # if ARGS.savewav:
+                    #     vad_audio.write_wav(
+                    #         os.path.join(ARGS.savewav, datetime.now().strftime("savewav_%Y-%m-%d_%H-%M-%S_%f.wav")),
+                    #         wav_data)
+                    #     wav_data = bytearray()
+                    text = model.finishStream(stream_context)
+                    print("Recognized: %s" % text)
+                    stream_context = model.createStream()
+        else:
+            while True:  # repeatedly listen for phrases and put the resulting audio on the audio processing job queue
+                # TODO SIGNAL THREADING FOR EXIT
+                logger.info("\n*-*(source id {})*-* Start Listening ".format(source_id))
+                detected_audio_data = sl.detect_speech_activity(source, detection_callback=_get_postion_message)
+                detected_audio_data.add_metadata({"ODAS_source_ID": source_id})
+                logger.info("\n*-*(source id {})*-* Speech DETECTED {}".format(source_id, detected_audio_data))
+                if detected_audio_data:
+                    # TODO: idea, here the speaker should be also identified
+                    processed_audio_data = sl.process_speech(source, detected_audio_data, detection_callback=_get_postion_message)
+                    logger.info("\n*-*(source id {})*-* Speech COMPLETED: {}".format(source_id, processed_audio_data))
+                    # add to the recognition process
+                    recognizer_queue.put(processed_audio_data)
 
 
 # PARSER OPTION
@@ -260,7 +347,7 @@ if __name__ == '__main__':
         _th.daemon = True
         _th.start()
         listener_threads.append(_th)
-        sleep(.25)
+        sleep(2)
     try:
         odas_th = threading.Thread(target=thread_start_odas_switcher, )
         odas_th.start()

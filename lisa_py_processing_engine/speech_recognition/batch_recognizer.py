@@ -20,10 +20,207 @@ import time
 import uuid
 import logging
 
+import webrtcvad
+
 from .audio_sources import AudioSource
 from .audio_data import AudioData
 
 from . import UnknownValueError, RequestError
+
+
+ENERGY_THRESHOLD = 300  # minimum audio energy to consider for recording
+DYNAMIC_ENERGY_THRESHOLD = True
+DYNAMIC_ENERGY_ADJUSTMENT_DAMPING = 0.15
+DYNAMIC_ENERGY_RATIO = 1.5
+PAUSE_THRESHOLD = 0.8  # seconds of non-speaking audio before a phrase is considered complete
+OPERATION_TIMEOUT = None  # seconds after an internal operation (e.g., an API request) starts before it times out, or ``None`` for no timeout
+PHRASE_THRESHOLD = 0.3  # minimum seconds of speaking audio before we consider the speaking audio a phrase - values below this are ignored (for filtering out clicks and pops)
+NON_SPEAKING_DURATION = 0.5  # seconds of non-speaking audio to keep on both sides of the recording
+
+
+def resample(data, input_rate, output_rate):
+    """
+    Microphone may not support our native processing sampling rate, so
+    resample from input_rate to RATE_PROCESS here for webrtcvad and
+    deepspeech
+
+    Args:
+        data (binary): Input audio stream
+        input_rate (int): Input audio rate to resample from
+    """
+    data16 = np.fromstring(string=data, dtype=np.int16)
+    resample_size = int(len(data16) / input_rate * output_rate)
+    resample = signal.resample(data16, resample_size)
+    resample16 = np.array(resample, dtype=np.int16)
+    return resample16.tostring()
+
+class SpeechListener_RT(AudioSource):
+
+    def __init__(self, aggressiveness=3, ):
+        """
+
+        :param aggressiveness: an integer between 0 and 3, 0 being the least aggressive about filtering out non-speech,
+         3 the most aggressive. Default: 3")
+        """
+        self.energy_threshold = ENERGY_THRESHOLD
+        self.dynamic_energy_threshold = DYNAMIC_ENERGY_THRESHOLD
+        self.dynamic_energy_adjustment_damping = DYNAMIC_ENERGY_ADJUSTMENT_DAMPING
+        self.dynamic_energy_ratio = DYNAMIC_ENERGY_RATIO
+        self.pause_threshold = PAUSE_THRESHOLD
+        self.operation_timeout = OPERATION_TIMEOUT
+        self.phrase_threshold = PHRASE_THRESHOLD
+        self.non_speaking_duration = NON_SPEAKING_DURATION
+        self.vad = webrtcvad.Vad(aggressiveness)
+
+        self.logger = logging.getLogger(name="SpeechListener_RT")
+        self.logger.setLevel(logging.DEBUG)
+
+    # def frame_generator(self, source):
+    #     """Generator that yields all audio frames from microphone."""
+    #     if source.SAMPLE_RATE == self.SAMPLE_RATE:
+    #         while True:
+    #             yield source.stream.read(source.CHUNK)
+    #     else:
+    #         while True:
+    #             yield resample(source.stream.read(source.CHUNK), source.SAMPLE_RATE, self.SAMPLE_RATE)
+
+    def my_listen(self, source, timeout=None, phrase_time_limit=None, padding_ms=300, ratio=0.75):
+        assert isinstance(source, AudioSource), "Source must be an audio source"
+        assert source.stream is not None, "Audio source must be entered before listening, see documentation for ``AudioSource``; are you using ``source`` outside of a ``with`` statement?"
+        assert self.pause_threshold >= self.non_speaking_duration >= 0
+
+        seconds_per_buffer = float(source.CHUNK) / source.SAMPLE_RATE
+        pause_buffer_count = int(math.ceil(
+            self.pause_threshold / seconds_per_buffer))  # number of buffers of non-speaking audio during a phrase, before the phrase should be considered complete
+        phrase_buffer_count = int(math.ceil(
+            self.phrase_threshold / seconds_per_buffer))  # minimum number of buffers of speaking audio before we consider the speaking audio a phrase
+        non_speaking_buffer_count = int(math.ceil(
+            self.non_speaking_duration / seconds_per_buffer))  # maximum number of buffers of non-speaking audio to retain before and after a phrase
+
+        self.logger.debug(
+            "listen: seconds_per_buffer={} , pause_buffer_count={}, phrase_buffer_count={} non_speaking_buffer_count={}".format(
+                seconds_per_buffer, pause_buffer_count, phrase_buffer_count, non_speaking_buffer_count))
+        # read audio input for phrases until there is a phrase that is long enough
+        elapsed_time = 0  # number of seconds of audio read
+        phrase_start_time = elapsed_time
+        buffer = b""  # an empty buffer means that the stream has ended and there is no data left to read
+        # Audio Detection
+
+        num_padding_frames = int(1000.0 * padding_ms // seconds_per_buffer)
+        ring_buffer = collections.deque(maxlen=num_padding_frames)
+
+        triggered = False
+        # frames = collections.deque()
+        
+
+        # store audio input until the phrase starts
+        while True:
+            # handle waiting too long for phrase by raising an exception
+            elapsed_time += seconds_per_buffer
+            if timeout and elapsed_time > timeout:
+                raise WaitTimeoutError("DETECTION: listening timed out while waiting for phrase to start")
+            print("1. read")
+            buffer = source.stream.read(source.CHUNK)
+            print("1.B END read")
+            if len(buffer) == 0:
+                print('quaaaa')
+                continue
+
+            if phrase_time_limit and elapsed_time - phrase_start_time > phrase_time_limit:
+                self.logger.debug(
+                    "LISTEN: phrase limit exceeded: elapsed {}, started at {} ".format(elapsed_time,
+                                                                                       phrase_start_time))
+                break
+            
+           # frames.append(buffer) # Serve frames??
+            print("2. is speech")
+            is_speech = self.vad.is_speech(buffer, self.sample_rate)
+
+            if not triggered:
+                print("3A. not triggered")
+                ring_buffer.append((buffer, is_speech))
+                num_voiced = len([f for f, speech in ring_buffer if speech])
+                if num_voiced > ratio * num_padding_frames:
+                    triggered = True
+                    for f, s in ring_buffer:
+                        yield f
+                    ring_buffer.clear()
+                    phrase_start_time = elapsed_time
+
+            else:
+                print("3B.  triggered")
+                yield buffer
+                ring_buffer.append((buffer, is_speech))
+                num_unvoiced = len([f for f, speech in ring_buffer if not speech])
+                if num_unvoiced > ratio * num_padding_frames:
+                    triggered = False
+                    yield None
+                    ring_buffer.clear()
+                    phrase_start_time = elapsed_time
+
+            # self.logger.debug(
+            #     "DETECTION: N chunk to read={} samples, buffer size={} bytes".format(source.CHUNK, len(buffer)))
+            # if len(buffer) == 0:
+            #     break  # reached end of the stream
+            #
+            # frames.append(buffer)
+            # if len(
+            #         frames) > non_speaking_buffer_count:  # ensure we only keep the needed amount of non-speaking buffers
+            #     _a = frames.popleft()
+            #     self.logger.debug(
+            #         "DETECTION: ensure we only keep the needed amount of non-speaking buffers: popleft=".format(
+            #             len(_a)))
+            #
+            # # detect whether speaking has started on audio input
+            # energy = audioop.rms(buffer, source.SAMPLE_WIDTH)  # energy of the audio signal
+            # self.logger.debug("DETECTION: detected? {}, energy/energy_threshold: {}/{}={}".format(
+            #     energy > self.energy_threshold, energy, self.energy_threshold, energy / self.energy_threshold))
+            # if energy > self.energy_threshold:
+            #     self.logger.debug(
+            #         "source detected, energy/energy_threshold: {}".format(energy / self.energy_threshold))
+            #     break
+            # elif energy > 0.707 * self.energy_threshold:
+            #     self.logger.debug("source over -3dB threshold, energy/energy_threshold: {} (dyn_th={})".format(
+            #         energy / self.energy_threshold, self.energy_threshold))
+            #
+            # # dynamically adjust the energy threshold using asymmetric weighted average
+            # if self.dynamic_energy_threshold:
+            #     damping = self.dynamic_energy_adjustment_damping ** seconds_per_buffer  # account for different chunk sizes and rates
+            #     target_energy = energy * self.dynamic_energy_ratio
+            #     self.energy_threshold = self.energy_threshold * damping + target_energy * (1 - damping)
+            # self.logger.debug("DETECTION:  new dynamic_energy_threshold: {}".format(self.energy_threshold))
+
+    def vad_collector(self, padding_ms=300, ratio=0.75, frames=None):
+        """Generator that yields series of consecutive audio frames comprising each utterence, separated by yielding a single None.
+            Determines voice activity by ratio of frames in padding_ms. Uses a buffer to include padding_ms prior to being triggered.
+            Example: (frame, ..., frame, None, frame, ..., frame, None, ...)
+                      |---utterence---|        |---utterence---|
+        """
+        if frames is None: frames = self.frame_generator()
+        num_padding_frames = padding_ms // self.frame_duration_ms
+        ring_buffer = collections.deque(maxlen=num_padding_frames)
+        triggered = False
+        for frame in frames:
+            if len(frame) < 640:
+                return
+
+            is_speech = self.vad.is_speech(frame, self.sample_rate)
+            if not triggered:
+                ring_buffer.append((frame, is_speech))
+                num_voiced = len([f for f, speech in ring_buffer if speech])
+                if num_voiced > ratio * ring_buffer.maxlen:
+                    triggered = True
+                    for f, s in ring_buffer:
+                        yield f
+                    ring_buffer.clear()
+            else:
+                yield frame
+                ring_buffer.append((frame, is_speech))
+                num_unvoiced = len([f for f, speech in ring_buffer if not speech])
+                if num_unvoiced > ratio * ring_buffer.maxlen:
+                    triggered = False
+                    yield None
+                    ring_buffer.clear()
 
 
 class SpeechListener(AudioSource):
@@ -39,15 +236,15 @@ class SpeechListener(AudioSource):
          Snowboy hotword configuration files (`*.pmdl` or `*.umdl` format).
         """
         # TODO: these should be configurable!
-        self.energy_threshold = 700  # 300  # minimum audio energy to consider for recording
-        self.dynamic_energy_threshold = True
-        self.dynamic_energy_adjustment_damping = 0.15
-        self.dynamic_energy_ratio = 1.5
-        self.pause_threshold = 0.8  # seconds of non-speaking audio before a phrase is considered complete
-        self.operation_timeout = None  # seconds after an internal operation (e.g., an API request) starts before it times out, or ``None`` for no timeout
+        self.energy_threshold = ENERGY_THRESHOLD
+        self.dynamic_energy_threshold = DYNAMIC_ENERGY_THRESHOLD
+        self.dynamic_energy_adjustment_damping = DYNAMIC_ENERGY_ADJUSTMENT_DAMPING
+        self.dynamic_energy_ratio = DYNAMIC_ENERGY_RATIO
+        self.pause_threshold = PAUSE_THRESHOLD
+        self.operation_timeout = OPERATION_TIMEOUT
+        self.phrase_threshold = PHRASE_THRESHOLD
+        self.non_speaking_duration = NON_SPEAKING_DURATION
 
-        self.phrase_threshold = 0.3  # minimum seconds of speaking audio before we consider the speaking audio a phrase - values below this are ignored (for filtering out clicks and pops)
-        self.non_speaking_duration = 0.5  # seconds of non-speaking audio to keep on both sides of the recording
         self.logger = logging.getLogger(name="SpeechListener")
         self.logger.setLevel(logging.INFO)
 
