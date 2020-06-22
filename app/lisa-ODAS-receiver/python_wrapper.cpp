@@ -4,9 +4,30 @@
 #include "matrix_odas_receiver.h"
 
 
-int start_main_loop() {
+extern int parse_ini_file(char * ini_name);
+
+/* int start_main_loop() {
+	int status = parse_ini_file("/home/pi/dev/rhasspy-lisa-odas-hermes/lisa-odas/config/matrix-lisa/odas-rcv.ini");
+	printf("parse_ini_file return: %", status);
 	return main_loop();
-}
+} */
+
+
+int start_main_loop(char * ini_name) {
+	// int status = parse_ini_file(ini_name);
+	// int status = parse_ini_file("/home/pi/dev/rhasspy-lisa-odas-hermes/lisa-odas/config/matrix-lisa/odas-rcv.ini");
+	printf("parse_ini_file  %s\n", ini_name);
+	int status = parse_ini_file(ini_name);
+	printf("parse_ini_file return: %d\n", status);
+	return main_loop();
+} 
+
+/* int start_main_loop() {
+	char * ini_name = "/home/pi/dev/rhasspy-lisa-odas-hermes/lisa-odas/config/matrix-lisa/odas-rcv.ini";
+	int status = parse_ini_file(ini_name);
+	printf("parse_ini_file return: %", status);
+	return main_loop();
+} */
 
 static callback_SST_t fcn_callback_SST = NULL;
 static callback_SSL_t fcn_callback_SSL = NULL;

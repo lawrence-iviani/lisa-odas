@@ -29,6 +29,9 @@ find_path (JSON_C_INCLUDE_DIR json.h PATH_SUFFIXES json-c json)
 find_library (JSON_C_LIBRARIES NAMES json-c libjson-c)
 include_directories (${JSON_C_INCLUDE_DIR})
 
+# used by lisa receiver
+include_directories(app/lisa-ODAS-receiver/iniparser/src)
+find_library (INIPARSER_C_LIBRARIES  NAMES libiniparser.a PATHS app/lisa-ODAS-receiver/iniparser)
 
 
 
@@ -224,6 +227,7 @@ target_link_libraries(odaslive
 #Add new app based on matrix-odas
 
 add_library(lisarcv SHARED
+	app/lisa-ODAS-receiver/common.cpp 
 	app/lisa-ODAS-receiver/matrix_odas_receiver.cpp 
 	app/lisa-ODAS-receiver/connection.cpp 
 	app/lisa-ODAS-receiver/led_bus.cpp 
@@ -235,6 +239,7 @@ target_link_libraries(lisarcv
     odas
     ${JSON_C_LIBRARIES}
     ${MATRIX_CREATOR_HAL}
+	${INIPARSER_C_LIBRARIES}
 )
 
 add_executable(lisa-ODAS-receiver
@@ -249,6 +254,7 @@ target_link_libraries(lisa-ODAS-receiver
 add_executable(odasserver
     app/odasserver/main.c
 )
+
 target_link_libraries(odasserver
     odas
 )

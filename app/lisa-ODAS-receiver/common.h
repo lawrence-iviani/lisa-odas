@@ -9,56 +9,59 @@
 #include <stdio.h>  // fopen & c
 
 
+// Parse with external library a ini file in the given path
+int parse_ini_file(char * ini_name);
+
 /* -------------------------------------------------------------- */
 /* ---------- GENERAL CONFIGURATION, LEDs, CONNECTION  ---------- */
 /* -------------------------------------------------------------- */
 // ENERGY_COUNT : Number of sound energy slots to maintain.
 #define ENERGY_COUNT 36
 // MAX_VALUE : controls smoothness
-#define MAX_VALUE 150
+extern int MAX_VALUE;
 // INCREMENT : controls sensitivity
-#define INCREMENT 20
+extern int INCREMENT;
 // DECREMENT : controls delay in the dimming
-#define DECREMENT 2
+extern int DECREMENT;
 // MIN_THRESHOLD: Filters out low energy
-#define MIN_THRESHOLD 5
+extern int MIN_THRESHOLD ;
 // MAX_BRIGHTNESS: 0 - 255
-#define MAX_BRIGHTNESS 220	
+extern short int MAX_BRIGHTNESS;
 // SLEEP IN SEC, 0.1s -> 100 ms, wating time before checking if a socket connection is available (accept return > 0)
-#define SLEEP_ACCEPT_LOOP 0.5
+extern float SLEEP_ACCEPT_LOOP ;
 // How many empty messges should be received before raising a timeout
-#define MAX_EMPTY_MESSAGE 200
+extern int MAX_EMPTY_MESSAGE;
 //In a recv call, how many buffers of PCM data should i acquire. 
 // Provide a balance between CPU usage (less buffers, higher CPU) and Latency (less buffers, lower latency) (TODO: find balance)
 #define RECV_PCM_BUFFERS 4
 // This must be the same parameters as in defined in configuration ssl.nPots, the fix number of messages, stream that are transmitted.
 #define MAX_ODAS_SOURCES 4
 // Use for dumping received RAW files to PCM
-#define DUMP_PCM 0
+extern bool DUMP_PCM ;
 // Number of ODAS_data_source (SST, SSL, SSS_S, SSS_P)
 #define NUM_OF_ODAS_DATA_SOURCES 4 
 // The max baclog message number in socket recv. WIth 1 I assume only one message at time is processed (TODO: not sure of this assumption)
-#define MAX_RECV_BACKLOG 1
+extern short int MAX_RECV_BACKLOG;
 
 // Raw wave data stream
 // as defined in SSS module in configuration sss.separated|postfiltered
-#define SSS_SAMPLERATE 16000
+extern int SSS_SAMPLERATE;
 #define SSS_HOPSIZE 128
 #define SSS_BITS 16
-#define SSS_GAIN 10.0  // Used only in postfiltered. TODO: Verify the effect
+//extern float SSS_GAIN;  // Used only in postfiltered. TODO: Verify the effect (the post processed ODAS is not really used at today, could be removed)
 
 // Activate for debug different components
-#define DEBUG_CONNECTION 0
-#define DEBUG_DOA 0
-#define DEBUG_JSON 0
-#define DEBUG_INCOME_MSG 0
-#define DEBUG_DECODE 0
-#define DEBUG_DUMP_FILES 0
-#define DEBUG_PYTHON_WRAPPER 0
+extern int DEBUG_CONNECTION;
+extern int DEBUG_DOA;
+extern int DEBUG_JSON;
+extern int DEBUG_INCOME_MSG;
+extern int DEBUG_DECODE;
+extern int DEBUG_DUMP_FILES;
+extern int DEBUG_PYTHON_WRAPPER;
 
 // Debug options specific components
-#define PRINT_DETECTION 0 // In relation to message debug only items that have a non empty tag for SST messages
-#define PRINT_MIN_DETECTION_SSL_E 0.2
+extern bool PRINT_DETECTION; // In relation to message debug only items that have a non empty tag for SST messages
+extern float PRINT_MIN_DETECTION_SSL_E; // Threshold for printing above a minimum, set to 0.0 to print all
 
 /* ------------------------------------------------------- */
 /* ---------- CONNECTION CONSTANT AND STRUCTURE ---------- */
@@ -153,6 +156,7 @@ struct led_energies_struct {
         do { if (DEBUG) fprintf(stdout, "%s:%d:%s(): " fmt, __FILENAME__, \
                                 __LINE__, __func__, __VA_ARGS__); fflush(stdout);} while (0)
 
+// used for calling C functions in PYTHON_WRAPPER
 #ifdef __cplusplus
 #define EXTERN_C extern "C" {
 #define EXTERN_C_END }

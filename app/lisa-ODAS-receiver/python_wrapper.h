@@ -27,7 +27,8 @@ typedef void (*callback_SSS_P_t)(
 EXTERN_C
 
 // Start the main loop, should be called once
-int start_main_loop();
+// ini name is the path to a ini file (see common.h)
+int start_main_loop(char * ini_name);
 
 // Check if there is a registered callback for item type c, see in common.h the enumeration ODAS_data_source
 bool has_py_callback(int c);

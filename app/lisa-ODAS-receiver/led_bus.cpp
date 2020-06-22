@@ -40,12 +40,9 @@ void update_pot(SSL_src_struct * SSL_data_src, SST_src_struct * SST_data_src)  {
   led_energies.detect[i_angle_fi_t] += INCREMENT * t_act;
 
   // limit at MAX_VALUE
-  led_energies.energy_array_azimuth[i_angle_fi] =
-      led_energies.energy_array_azimuth[i_angle_fi] > MAX_VALUE ? MAX_VALUE : led_energies.energy_array_azimuth[i_angle_fi];
-  led_energies.energy_array_elevation[i_angle_proj_theta] =
-      led_energies.energy_array_elevation[i_angle_proj_theta] > MAX_VALUE ? MAX_VALUE : led_energies.energy_array_elevation[i_angle_proj_theta];
-  led_energies.detect[i_angle_fi_t] =
-      led_energies.detect[i_angle_fi_t] > MAX_VALUE ? MAX_VALUE : led_energies.detect[i_angle_fi_t];
+  led_energies.energy_array_azimuth[i_angle_fi] = led_energies.energy_array_azimuth[i_angle_fi] > MAX_VALUE ? MAX_VALUE : led_energies.energy_array_azimuth[i_angle_fi];
+  led_energies.energy_array_elevation[i_angle_proj_theta] = led_energies.energy_array_elevation[i_angle_proj_theta] > MAX_VALUE ? MAX_VALUE : led_energies.energy_array_elevation[i_angle_proj_theta];
+  led_energies.detect[i_angle_fi_t] = led_energies.detect[i_angle_fi_t] > MAX_VALUE ? MAX_VALUE : led_energies.detect[i_angle_fi_t];
 
   // Debug section
   debug_print(DEBUG_DOA, "Object SSL_DATA.src(0x%X)\t(x=%f\ty=%f\tz=%f\tE=%f)\n", SSL_data_src,x,y,z,E);
@@ -79,7 +76,7 @@ void set_all_pots(hal_leds_struct *hw_led, SSL_struct * SSL_data, SST_struct * S
 			update_pot(&SSL_data->src[c], &SST_data->src[c]);
 	}
 	
-	debug_print(DEBUG_DOA, "Update led bus (#%d) for Matrix %s HW_Data(0x%X)\n", hw_led->bus.MatrixLeds(), hw_led->bus.MatrixName() == hal::kMatrixCreator ? "Creator" : "Matrix",hw_led);
+	debug_print(DEBUG_DOA, "Update led bus (#%d) for board ->Matrix %s<- HW_Data(0x%X)\n", hw_led->bus.MatrixLeds(), hw_led->bus.MatrixName() == hal::kMatrixCreator ? "Creator" : "Voice",hw_led);
     for (int i = 0; i < hw_led->bus.MatrixLeds(); i++) {
       // led index to angle
       int led_angle = hw_led->bus.MatrixName() == hal::kMatrixCreator
@@ -91,12 +88,13 @@ void set_all_pots(hal_leds_struct *hw_led, SSL_struct * SSL_data, SST_struct * S
       int color_azimuth = led_energies.energy_array_azimuth[index_pots] * MAX_BRIGHTNESS / MAX_VALUE;
 	  int color_elevation = led_energies.energy_array_elevation[index_pots] * MAX_BRIGHTNESS / MAX_VALUE;
 	  int color_tracking = led_energies.detect[index_pots] * MAX_BRIGHTNESS / MAX_VALUE;
+	  debug_print(DEBUG_DOA,"led_angle=%d, index_pots=%d, color_azimuth=%d, color_elevation=%d color_tracking=%d\n", led_angle,index_pots,color_azimuth, color_elevation, color_tracking ); 
 	  
       // Removing colors below the threshold
       color_azimuth = (color_azimuth < MIN_THRESHOLD) ? 0 : color_azimuth;
 	  color_elevation = (color_elevation < MIN_THRESHOLD) ? 0 : color_elevation;
 	  color_tracking = (color_tracking < MIN_THRESHOLD) ? 0 : color_tracking;
-	  debug_print(DEBUG_DOA,"led_angle=%d, index_pots=%d, color_azimuth=%d, color_elevation=%d color_tracking=%d\n", led_angle,index_pots,color_azimuth, color_elevation, color_tracking ); 
+	  debug_print(DEBUG_DOA,"MIN_THRESHOLD= %d, color_azimuth=%d, color_elevation=%d color_tracking=%d\n", MIN_THRESHOLD, color_azimuth, color_elevation, color_tracking ); 
 	
       hw_led->image1d.leds[i].red = color_tracking;
       hw_led->image1d.leds[i].green = color_elevation;

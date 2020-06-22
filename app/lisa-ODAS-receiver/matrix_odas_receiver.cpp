@@ -1,12 +1,38 @@
 
-
-
 #include "common.h"
 #include "led_bus.h"
 #include "connection.h"
 #include "json_decoder.h"
 #include "matrix_odas_receiver.h"
 #include "python_wrapper.h"
+
+
+/* ----------------------------------------------------------- */
+/* ---------- EXTERNAL DATA STRUCTURE from common.h ---------- */
+/* ----------------------------------------------------------- */
+// Default values, check for original values in common.h. 
+// shared among modules
+// overriden if parse_ini_file is used 
+int DEBUG_CONNECTION = 0;
+int MAX_VALUE;
+int DEBUG_PYTHON_WRAPPER = 0;
+int DEBUG_DOA = 0;
+int DEBUG_JSON = 0;
+int DEBUG_INCOME_MSG = 0;
+int DEBUG_DECODE = 0;
+int DEBUG_DUMP_FILES = 0;
+bool DUMP_PCM = 0;
+bool PRINT_DETECTION = 0;
+float PRINT_MIN_DETECTION_SSL_E = 0.2;
+int INCREMENT = 20;
+int DECREMENT = 2;
+int MIN_THRESHOLD = 5;
+int short MAX_BRIGHTNESS = 220;
+float SLEEP_ACCEPT_LOOP = 0.5;
+int MAX_EMPTY_MESSAGE = 200;
+short int MAX_RECV_BACKLOG = 4;
+int SSS_SAMPLERATE = 16000;
+
 
 /* --------------------------------------------- */
 /* ---------- INTERNAL DATA STRUCTURE ---------- */
@@ -15,6 +41,7 @@ static SSL_struct SSL_data;
 static SST_struct SST_data;
 static hal_leds_struct hw_led;
 const int backlog = MAX_RECV_BACKLOG; // The number of message in queue in a recv
+
 
 /* ------------------------------- */
 /* ---------- FUNCTIONS ---------- */
@@ -98,8 +125,8 @@ void decode_audio_stream_raw(FILE* outfile, char* odas_stream_msg, int message_l
 
 int main_loop() {
   int c; // a counter for cycles for 
-  
 // Everloop Initialization
+ 
   if (!hw_led.bus.Init()) return false;
   hw_led.image1d = hal::EverloopImage(hw_led.bus.MatrixLeds());
   hw_led.everloop.Setup(&hw_led.bus);
@@ -114,8 +141,8 @@ int main_loop() {
   hw_led.everloop.Write(&hw_led.image1d);
 
 // INIT MESSAGES
-  printf("(0x%X)SSL_data and (0x%X)SST_data", &SSL_data, &SST_data);
-  printf("Init messages ");
+  printf("main_loop: (0x%X)SSL_data and (0x%X)SST_data", &SSL_data, &SST_data);
+  printf("main_loop: Init messages ");
   for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
     messages[c] = (char *)malloc(sizeof(char) * n_bytes_msg[c]);
 	memset(messages[c], '\0', sizeof(char) * n_bytes_msg[c]);
