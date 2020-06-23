@@ -2,9 +2,19 @@ ODAS Lisa
 =======
 A receiver and decoder of ODAS signal which is able to feed a python  (based on kaldi or deep speech) and an intent recognition to trigger specific actions (e.g sending a ROS event).
 Future roadmap
-- Add configuration for receiver via ini file
+- ~~Add configuration for receiver via ini file~~
 - ROS publisher for messages SST, SSL and SSS
 
+```bash
+sudo apt-get install libfftw3-dev
+sudo apt-get install libconfig-dev
+sudo apt-get install libasound2-dev
+
+git clone https://github.com/ndevilla/iniparser
+cd iniparser
+make
+
+```
 
 ODAS 
 =======
@@ -41,5 +51,13 @@ This is now in another branch (unmantained with the test for local speech recogn
 See [lisa-odas speech recognition](https://github.com/lawrence-iviani/lisa-odas/tree/speech_recognition)
 
 Ver.3
+The speech recognition is removed (available in the branch)
 The actual, transformation in a Sensor with DOA and activity identification plus a Robot Automation based on Command Speech.
+It is now imported as submodule in the project [rhasspy-lisa-odas-hermes](https://github.com/lawrence-iviani/rhasspy-lisa-odas-hermes/)
+
+License
+=======
+ODAS: https://github.com/introlab/odas/blob/master/LICENSE (used as external dynamic library)
+iniparser: https://github.com/ndevilla/iniparser/blob/master/LICENSE (used as a static library)
+
 
