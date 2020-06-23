@@ -5,6 +5,8 @@ if(COMMAND cmake_policy)
   cmake_policy(SET CMP0003 NEW)
 endif(COMMAND cmake_policy)
 
+
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PC_FFTW3 REQUIRED fftw3f)
 pkg_check_modules(PC_ALSA REQUIRED alsa)
@@ -34,9 +36,7 @@ include_directories(app/lisa-ODAS-receiver/iniparser/src)
 find_library (INIPARSER_C_LIBRARIES  NAMES libiniparser.a PATHS app/lisa-ODAS-receiver/iniparser)
 
 
-
 set(SRC
-
     src/general/format.c
     src/general/interface.c
     src/general/link.c
@@ -195,7 +195,6 @@ set(SRC
     src/sink/snk_spectra.c
     src/sink/snk_tracks.c
     src/source/src_hops.c
-
 )
 
 add_library(odas SHARED
@@ -241,6 +240,7 @@ target_link_libraries(lisarcv
     ${MATRIX_CREATOR_HAL}
 	${INIPARSER_C_LIBRARIES}
 )
+
 
 add_executable(lisa-ODAS-receiver
     app/lisa-ODAS-receiver/main.cpp

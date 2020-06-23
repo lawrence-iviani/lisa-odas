@@ -10,7 +10,7 @@ int parse_ini_file(char * ini_name)
     if (ini==NULL) {
         fprintf(stderr, "cannot parse file: %s\n", ini_name);
 		printf("cannot parse file: %s\n", ini_name);
-        return -1 ;
+        return -1;
     }
     
 	// ENERGY_COUNT = iniparser_getint(ini, "led:energy_count",36);

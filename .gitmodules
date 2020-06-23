@@ -1,0 +1,3 @@
+[submodule "app/lisa-ODAS-receiver/iniparser"]
+	path = app/lisa-ODAS-receiver/iniparser
+	url = https://github.com/ndevilla/iniparser.git
