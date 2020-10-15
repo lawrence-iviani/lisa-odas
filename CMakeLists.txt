@@ -14,6 +14,9 @@ pkg_check_modules(PC_LIBCONFIG REQUIRED libconfig)
 pkg_search_module (PC_JSON-C REQUIRED json-c json)
 
 find_library(MATRIX_CREATOR_HAL matrix_creator_hal)
+if(MATRIX_CREATOR_HAL)
+	add_definitions(-DMATRIX_LED) 
+endif(MATRIX_CREATOR_HAL)
 
 include_directories("${PROJECT_SOURCE_DIR}/include")
 

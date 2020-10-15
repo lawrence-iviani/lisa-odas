@@ -10,7 +10,7 @@
 extern "C"
 #endif
 
-int main_loop(); 
+int main_loop(bool dump_file, bool use_matrix_led); 
 
 
 

@@ -1,10 +1,16 @@
 
 #include "common.h"
-#include "led_bus.h"
 #include "connection.h"
 #include "json_decoder.h"
 #include "matrix_odas_receiver.h"
 #include "python_wrapper.h"
+
+#ifdef MATRIX_LED
+#pragma message "MATRIX_LED flag is ON"
+#include "led_bus.h"
+#else
+#pragma message "MATRIX_LED flag is OFF"	
+#endif
 
 
 /* ----------------------------------------------------------- */
@@ -32,6 +38,7 @@ float SLEEP_ACCEPT_LOOP = 0.5;
 int MAX_EMPTY_MESSAGE = 200;
 short int MAX_RECV_BACKLOG = 4;
 int SSS_SAMPLERATE = 16000;
+bool USE_MATRIX_LED = false; // This is more for debug and works only with matrix overloop leds
 
 
 /* --------------------------------------------- */
@@ -39,10 +46,11 @@ int SSS_SAMPLERATE = 16000;
 /* --------------------------------------------- */
 static SSL_struct SSL_data;
 static SST_struct SST_data;
-static hal_leds_struct hw_led;
 const int backlog = MAX_RECV_BACKLOG; // The number of message in queue in a recv
 
-
+#ifdef MATRIX_LED
+static hal_leds_struct hw_led;
+#endif
 /* ------------------------------- */
 /* ---------- FUNCTIONS ---------- */
 /* ------------------------------- */
@@ -94,7 +102,6 @@ void decode_message(unsigned int msg_type, char * odas_json_msg) {
 	json_object *jobj = json_tokener_parse(odas_json_msg);
     json_parse(SSx_data, jobj, msg_type);
 	
-	
 	// Only needed if debugging
 	if (DEBUG_DECODE) {
 		char msg[1024];
@@ -123,22 +130,31 @@ void decode_audio_stream_raw(FILE* outfile, char* odas_stream_msg, int message_l
 	}
 }
 
-int main_loop() {
+int main_loop(bool dump_file, bool use_matrix_led) {
+#ifdef MATRIX_LED
+  USE_MATRIX_LED = use_matrix_led;
+#else
+  USE_MATRIX_LED = false;
+#endif
+  DUMP_PCM = dump_file;
   int c; // a counter for cycles for 
-// Everloop Initialization
- 
-  if (!hw_led.bus.Init()) return false;
-  hw_led.image1d = hal::EverloopImage(hw_led.bus.MatrixLeds());
-  hw_led.everloop.Setup(&hw_led.bus);
-
-// Clear all LEDs
-  for (hal::LedValue &led : hw_led.image1d.leds) {
-    led.red = 0;
-    led.green = 0;
-    led.blue = 0;
-    led.white = 0;
+  
+#ifdef MATRIX_LED
+  // Everloop Initialization
+  if (USE_MATRIX_LED) {
+	  if (!hw_led.bus.Init()) return false;
+	  hw_led.image1d = hal::EverloopImage(hw_led.bus.MatrixLeds());
+	  hw_led.everloop.Setup(&hw_led.bus);
+      // Clear all LEDs
+	  for (hal::LedValue &led : hw_led.image1d.leds) {
+		led.red = 0;
+		led.green = 0;
+		led.blue = 0;
+		led.white = 0;
+	  }
+	  hw_led.everloop.Write(&hw_led.image1d);
   }
-  hw_led.everloop.Write(&hw_led.image1d);
+#endif
 
 // INIT MESSAGES
   printf("main_loop: (0x%X)SSL_data and (0x%X)SST_data", &SSL_data, &SST_data);
@@ -252,8 +268,12 @@ int main_loop() {
 		if (DEBUG_INCOME_MSG) { printf("END RECEPTION message %s: len=%d\n+-+-+-+-+-+-+-+-+-+-\n", ODAS_data_source_str[c], messages_size[c]); }
 		fflush(stdout);
 	  }
-	  // Finally, set all the pots with all complete data
-	  set_all_pots(&hw_led ,&SSL_data, &SST_data);
+#ifdef MATRIX_LED
+	  if (USE_MATRIX_LED) {
+		 // Finally, set all the pots with all complete data
+		set_all_pots(&hw_led ,&SSL_data, &SST_data);
+	  }
+#endif
 	  if (DEBUG_INCOME_MSG) { printf("---------------------------------\nEND RECEPTION: %d\n---------------------------------\n\n", n_cycles);}
 	  n_cycles++;
   }

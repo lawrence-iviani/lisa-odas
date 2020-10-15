@@ -13,6 +13,13 @@ namespace hal = matrix_hal;
 /* --------------------------------------- */
 /* ---------- HW LED  STRUCTURE ---------- */
 /* --------------------------------------- */
+
+struct led_energies_struct {
+	int energy_array_azimuth[ENERGY_COUNT]; // fi
+	int energy_array_elevation[ENERGY_COUNT]; //theta
+	int detect[ENERGY_COUNT]; //detection level (if present)
+};
+
 struct hal_leds_struct {
    hal::MatrixIOBus bus;
    hal::EverloopImage image1d;

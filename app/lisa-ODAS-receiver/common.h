@@ -7,13 +7,14 @@
 #include <iostream>
 #include <string.h>
 #include <stdio.h>  // fopen & c
+#include <getopt.h>  //getopt
 
 
 // Parse with external library a ini file in the given path
 int parse_ini_file(char * ini_name);
 
 /* -------------------------------------------------------------- */
-/* ---------- GENERAL CONFIGURATION, LEDs, CONNECTION  ---------- */
+/* ---------- GENERAL CONFIGURATION, CONNECTION  ---------- */
 /* -------------------------------------------------------------- */
 // ENERGY_COUNT : Number of sound energy slots to maintain.
 #define ENERGY_COUNT 36
@@ -137,12 +138,6 @@ struct SST_struct {
 	unsigned int timestamp;
 	SST_src_struct src[MAX_ODAS_SOURCES]; // TODO, Max value or variable?
 }; // SST struct message
-
-struct led_energies_struct {
-	int energy_array_azimuth[ENERGY_COUNT]; // fi
-	int energy_array_elevation[ENERGY_COUNT]; //theta
-	int detect[ENERGY_COUNT]; //detection level (if present)
-};
 
 /* ---------------------------------------------------------------- */
 /* ---------- UTILITIES FOR DEBUG & OTHERS COMMONALITIES ---------- */

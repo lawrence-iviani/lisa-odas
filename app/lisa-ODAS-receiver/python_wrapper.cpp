@@ -14,12 +14,15 @@ extern int parse_ini_file(char * ini_name);
 
 
 int start_main_loop(char * ini_name) {
-	// int status = parse_ini_file(ini_name);
-	// int status = parse_ini_file("/home/pi/dev/rhasspy-lisa-odas-hermes/lisa-odas/config/matrix-lisa/odas-rcv.ini");
-	printf("parse_ini_file  %s\n", ini_name);
+	// TODO: to transform as argument options
+	bool dump_pcm = false;
+	bool use_overloop_led = false;
+	
+	printf("use_overloop_led %d - dump_pcm %d - parse_ini_file  %s\n",use_overloop_led, dump_pcm , ini_name);
+	
 	int status = parse_ini_file(ini_name);
 	printf("parse_ini_file return: %d\n", status);
-	return main_loop();
+	return main_loop(dump_pcm, use_overloop_led);
 } 
 
 /* int start_main_loop() {
