@@ -23,6 +23,23 @@ ODAS stands for Open embeddeD Audition System. This is a library dedicated to pe
 
 The [ODAS wiki](https://github.com/introlab/odas/wiki) describes how to build and run the software. 
 
+```bash
+# Create a folder to build the project:
+
+cd odas
+mkdir build
+cd build
+
+# Run CMake (in the build directory) :
+
+cmake ../
+
+# Compile the project:
+
+make
+
+```
+
 # Paper
 You can find more information about the methods implemented in ODAS in this paper: 
 
