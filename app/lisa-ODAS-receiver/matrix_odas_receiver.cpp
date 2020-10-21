@@ -136,7 +136,7 @@ int main_loop(bool dump_file, bool use_matrix_led) {
 #else
   USE_MATRIX_LED = false;
 #endif
-  DUMP_PCM = dump_file;
+  DUMP_PCM = dump_file or DUMP_PCM; // dump can be activated also in the config file
   int c; // a counter for cycles for 
   
 #ifdef MATRIX_LED
@@ -170,7 +170,7 @@ int main_loop(bool dump_file, bool use_matrix_led) {
 
 // DUMP FILES
   if (DUMP_PCM) {  
-	  printf(" Init output file(s)");
+	  printf(" Init output file(s) with %d @ %d Hz", (unsigned int) SSS_BITS/8, SSS_SAMPLERATE);
 	  for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
 			if (c==SSS_S or c == SSS_P) {
 				dump_outfile_fd[c] = fopen (dump_outfile_name[c], "wb");

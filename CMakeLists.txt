@@ -228,22 +228,41 @@ target_link_libraries(odaslive
 
 #Add new app based on matrix-odas
 
-add_library(lisarcv SHARED
-	app/lisa-ODAS-receiver/common.cpp 
-	app/lisa-ODAS-receiver/matrix_odas_receiver.cpp 
-	app/lisa-ODAS-receiver/connection.cpp 
-	app/lisa-ODAS-receiver/led_bus.cpp 
-	app/lisa-ODAS-receiver/json_decoder.cpp 
-	app/lisa-ODAS-receiver/python_wrapper.cpp 
-)
 
-target_link_libraries(lisarcv
-    odas
-    ${JSON_C_LIBRARIES}
-    ${MATRIX_CREATOR_HAL}
-	${INIPARSER_C_LIBRARIES}
-)
 
+if(MATRIX_CREATOR_HAL)
+	add_library(lisarcv SHARED
+		app/lisa-ODAS-receiver/common.cpp 
+		app/lisa-ODAS-receiver/matrix_odas_receiver.cpp 
+		app/lisa-ODAS-receiver/connection.cpp 
+		app/lisa-ODAS-receiver/led_bus.cpp 
+		app/lisa-ODAS-receiver/json_decoder.cpp 
+		app/lisa-ODAS-receiver/python_wrapper.cpp 
+	)
+
+	target_link_libraries(lisarcv
+		odas
+		${JSON_C_LIBRARIES}
+		${MATRIX_CREATOR_HAL}
+		${INIPARSER_C_LIBRARIES}
+	)
+else()
+
+	add_library(lisarcv SHARED
+		app/lisa-ODAS-receiver/common.cpp 
+		app/lisa-ODAS-receiver/matrix_odas_receiver.cpp 
+		app/lisa-ODAS-receiver/connection.cpp 
+		app/lisa-ODAS-receiver/json_decoder.cpp 
+		app/lisa-ODAS-receiver/python_wrapper.cpp 
+	)
+
+
+	target_link_libraries(lisarcv
+		odas
+		${JSON_C_LIBRARIES}
+		${INIPARSER_C_LIBRARIES}
+	)
+endif(MATRIX_CREATOR_HAL)
 
 add_executable(lisa-ODAS-receiver
     app/lisa-ODAS-receiver/main.cpp
