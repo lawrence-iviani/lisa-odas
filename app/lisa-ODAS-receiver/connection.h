@@ -17,5 +17,7 @@
 int init_connection(sockaddr_in &server_address, int port_number, int backlog);
 int accept_connection(int server_id);
 bool reception_terminate(unsigned int rcvd_bytes[]);
+int close_connection(int server_id);
+
 
 #endif

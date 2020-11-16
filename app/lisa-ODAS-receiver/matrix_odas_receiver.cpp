@@ -34,7 +34,7 @@ int INCREMENT = 20;
 int DECREMENT = 2;
 int MIN_THRESHOLD = 5;
 int short MAX_BRIGHTNESS = 220;
-float SLEEP_ACCEPT_LOOP = 0.5;
+float SLEEP_ACCEPT_LOOP = 1.0;
 int MAX_EMPTY_MESSAGE = 200;
 short int MAX_RECV_BACKLOG = 4;
 int SSS_SAMPLERATE = 16000;
@@ -183,8 +183,7 @@ int main_loop(bool dump_file, bool use_matrix_led) {
 	  }
 	  printf(" [OK]\n");
   }
-
-// INIT CONNECTIONS
+  // INIT CONNECTIONS
   printf(" Init listening");
   for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {
 	  if (port_numbers[c]) {
@@ -195,97 +194,129 @@ int main_loop(bool dump_file, bool use_matrix_led) {
   }
   printf(" [OK]\n");
   fflush(stdout);
-  
-// ACCEPT CONNECTIONS
-  printf(" Waiting For Connections\n ");
-  bool services_connected = false;
-  printf("Connecting: ");
-  while (!services_connected) {
-	for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {
-	  if (port_numbers[c]) {
-		printf("[%s", ODAS_data_source_str[c]);
-		connections_id[c] = accept_connection(servers_id[c]); 
-		printf("%s", connections_id[c] >= 0 ? " CONNECTED]\n" : ".]");
-		fflush(stdout);
-	  } 
-    }
-	services_connected = true;
-	for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
-	  services_connected = services_connected and (port_numbers[c] ? connections_id[c] > 0 : true);
-    }
-	printf("[services_connected %s\n", services_connected ? "True]" : "False]");
-	//services_connected = (portNumber_ssl ? connection_id_ssl > 0 : true) and (portNumber_sst ? connection_id_sst > 0 : true); 
-    usleep( (unsigned int)(SLEEP_ACCEPT_LOOP*1000000) ); 
-  } 
-  printf("Connection [OK]\n");
-  fflush(stdout);
-
-// RECEIVING DATA
-  printf("Receiving data........... \n");
-  int bytes_available;
-  void* SSx_data;
-  unsigned long n_cycles = 1; // Just a counter
-  while (!reception_terminate(messages_size)) { 
-	  // Separator to print only when debugging but not with the debug formatting	  
-	  if (DEBUG_INCOME_MSG) { printf("---------------------------------\nSTART RECEPTION: %d\n---------------------------------\n", n_cycles);}
-	  for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
-		if (!port_numbers[c]) {
-			// skip if 0, port not selected -> service not in use
-			continue;
+  while(1) {
+	
+	  
+	// ACCEPT CONNECTIONS
+	  printf(" Waiting For Connections\n ");
+	  bool services_connected = false;
+	  printf("Connecting: ");
+	  while (!services_connected) {
+		for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {
+		  if (port_numbers[c]) {
+			printf("[%s", ODAS_data_source_str[c]);
+			if (connections_id[c] <= 0) {
+				connections_id[c] = accept_connection(servers_id[c]); 
+			}
+			printf("(%d)-%s", connections_id[c], connections_id[c] >= 0 ? " CONNECTED]\n" : ".]");
+			fflush(stdout);
+		  } 
 		}
-	    memset(messages[c], '\0', sizeof(char) * n_bytes_msg[c]); // Reset before using, fill the message of NULLs (reset and possible previous values from previous iteraction)
-		ioctl(connections_id[c] ,FIONREAD,&bytes_available);
-		messages_size[c] = port_numbers[c] ? recv(connections_id[c] , messages[c], n_bytes_msg[c], 0): 0; // Received the message, if available
-		//messages_size[c] = port_numbers[c] ? recv(connections_id[c] , messages[c], n_bytes_msg[c], MSG_DONTWAIT ): 0; // Received the message, if available
-		debug_print(DEBUG_INCOME_MSG, "[Count %d] RECEIVED stream message %s: len=%d - bytes_available(before recv)=%d, ratio %f\n",n_cycles,  ODAS_data_source_str[c], messages_size[c], bytes_available, (float)bytes_available/n_bytes_msg[c]);
-		if (messages_size[c]) {
-			// accordingly to enum ODAS_data_source, 0 SSL, 1 SST, ...
-			// Decode an incoming message and store in the proper C structure
-			if (c == SST or c == SSL) {
-				messages[c][messages_size[c]] = 0x00; 
-				debug_print(DEBUG_INCOME_MSG, "RECEIVED JSON message %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
-				decode_message( c, messages[c]);
-				if (has_py_callback(c)) {
-					SSx_data = NULL;
-					SSx_data = c == SSL ? (void*)&SSL_data : SSx_data;
-					SSx_data = c == SST ? (void*)&SST_data : SSx_data;
-					py_callback_message(c, SSx_data) ;
-				}			
-			} else if (c == SSS_S or c == SSS_P) {
-				debug_print(DEBUG_INCOME_MSG, "RECEIVED PCM message %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
-				if (DUMP_PCM) {  
-					decode_audio_stream_raw(dump_outfile_fd[c], messages[c], messages_size[c]);
-				} 
-				if (has_py_callback(c)) {
-					py_callback_stream(c,  messages_size[c], messages[c]);
+		services_connected = true;
+		for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
+		  services_connected = services_connected and (port_numbers[c] ? connections_id[c] > 0 : true);
+		}
+		printf("[services_connected %s\n", services_connected ? "True]" : "False]");
+		//services_connected = (portNumber_ssl ? connection_id_ssl > 0 : true) and (portNumber_sst ? connection_id_sst > 0 : true); 
+		usleep( (unsigned int)(SLEEP_ACCEPT_LOOP*1000000) ); 
+	  } 
+	  printf("Connection [OK]\n");
+	  fflush(stdout);
+
+	// RECEIVING DATA
+	  printf("Receiving data........... \n");
+	  int bytes_available;
+	  void* SSx_data;
+	  unsigned long n_cycles = 1; // Just a counter
+	  while (!reception_terminate(messages_size)) { 
+		  // Separator to print only when debugging but not with the debug formatting	  
+		  if (DEBUG_INCOME_MSG) { printf("---------------------------------\nSTART RECEPTION: %d\n---------------------------------\n", n_cycles);}
+		  for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
+			if (!port_numbers[c]) {
+				// skip if 0, port not selected -> service not in use
+				continue;
+			}
+			memset(messages[c], '\0', sizeof(char) * n_bytes_msg[c]); // Reset before using, fill the message of NULLs (reset and possible previous values from previous iteraction)
+			ioctl(connections_id[c] ,FIONREAD,&bytes_available);
+			messages_size[c] = port_numbers[c] ? recv(connections_id[c] , messages[c], n_bytes_msg[c], 0): 0; // Received the message, if available
+			//messages_size[c] = port_numbers[c] ? recv(connections_id[c] , messages[c], n_bytes_msg[c], MSG_DONTWAIT ): 0; // Received the message, if available
+			debug_print(DEBUG_INCOME_MSG, "[Count %d] RECEIVED stream message %s: len=%d - bytes_available(before recv)=%d, ratio %f\n",n_cycles,  ODAS_data_source_str[c], messages_size[c], bytes_available, (float)bytes_available/n_bytes_msg[c]);
+			if (messages_size[c]) {
+				// accordingly to enum ODAS_data_source, 0 SSL, 1 SST, ...
+				// Decode an incoming message and store in the proper C structure
+				if (c == SST or c == SSL) {
+					messages[c][messages_size[c]] = 0x00; 
+					debug_print(DEBUG_INCOME_MSG, "RECEIVED JSON message %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
+					decode_message( c, messages[c]);
+					if (has_py_callback(c)) {
+						SSx_data = NULL;
+						SSx_data = c == SSL ? (void*)&SSL_data : SSx_data;
+						SSx_data = c == SST ? (void*)&SST_data : SSx_data;
+						py_callback_message(c, SSx_data) ;
+					}			
+				} else if (c == SSS_S or c == SSS_P) {
+					debug_print(DEBUG_INCOME_MSG, "RECEIVED PCM message %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
+					if (DUMP_PCM) {  
+						decode_audio_stream_raw(dump_outfile_fd[c], messages[c], messages_size[c]);
+					} 
+					if (has_py_callback(c)) {
+						py_callback_stream(c,  messages_size[c], messages[c]);
+					}
+				} else {
+					printf("Here with invalid c=%d",c );
 				}
 			} else {
-				printf("Here with invalid c=%d",c );
+				debug_print(DEBUG_INCOME_MSG, "returned 0 len for %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
 			}
-		} else {
-			debug_print(DEBUG_INCOME_MSG, "returned 0 len for %s: len=%d\n", ODAS_data_source_str[c], messages_size[c]);
+			if (DEBUG_INCOME_MSG) { printf("END RECEPTION message %s: len=%d\n+-+-+-+-+-+-+-+-+-+-\n", ODAS_data_source_str[c], messages_size[c]); }
+			fflush(stdout);
+		  }
+	#ifdef MATRIX_LED
+		  if (USE_MATRIX_LED) {
+			 // Finally, set all the pots with all complete data
+			set_all_pots(&hw_led ,&SSL_data, &SST_data);
+		  }
+	#endif
+		  if (DEBUG_INCOME_MSG) { printf("---------------------------------\nEND RECEPTION: %d\n---------------------------------\n\n", n_cycles);}
+		  n_cycles++;
+	  }
+	 
+	// CLOSING CONNECTION
+	  printf("Closing connection");
+	  services_connected = true;
+	  int conncetion_retval;
+	  while (services_connected) {
+		for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {
+		  if (port_numbers[c]) {
+			if (connections_id[c] != 0) {
+				printf("Closing [connection (%d) - server (%d)", connections_id[c], servers_id[c]);
+				conncetion_retval = close_connection(connections_id[c]); //close_connection(servers_id[c]); 
+				if (conncetion_retval == 0) {
+					connections_id[c] = 0; // delete the connection reference
+				}
+				printf(" ... %s", conncetion_retval == 0 ? " CLOSED]\n" : "OPEN]\n");
+				fflush(stdout);
+			}
+		  } 
 		}
-		if (DEBUG_INCOME_MSG) { printf("END RECEPTION message %s: len=%d\n+-+-+-+-+-+-+-+-+-+-\n", ODAS_data_source_str[c], messages_size[c]); }
-		fflush(stdout);
-	  }
-#ifdef MATRIX_LED
-	  if (USE_MATRIX_LED) {
-		 // Finally, set all the pots with all complete data
-		set_all_pots(&hw_led ,&SSL_data, &SST_data);
-	  }
-#endif
-	  if (DEBUG_INCOME_MSG) { printf("---------------------------------\nEND RECEPTION: %d\n---------------------------------\n\n", n_cycles);}
-	  n_cycles++;
-  }
-  printf("Receiving Data terminated [OK]\n");
-  if (DUMP_PCM) {  
+		services_connected = false;
+		for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
+		  services_connected = services_connected and (port_numbers[c] ? connections_id[c] == 0 : false);
+		}
+	  } 
+	  printf("Disconnected [OK]\n");
+	  fflush(stdout);
+  }// end while(1) big loop
+   printf("Receiving Data terminated [OK]\n");
+	if (DUMP_PCM) {  
 	  for (c = 0 ; c < NUM_OF_ODAS_DATA_SOURCES; c++) {	
 		if (c==SSS_S or c == SSS_P) {
 			fclose (dump_outfile_fd[c]); 
 		}
 	  }
 	  printf("Closed Files [OK]\n");
-  }
-  return 1; 
+	}
+  
+  return -10; 
 }
 
