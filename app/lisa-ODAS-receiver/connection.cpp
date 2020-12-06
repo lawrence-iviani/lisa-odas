@@ -5,7 +5,7 @@
 /* ---------- INTERNAL DATA STRUCTURE ---------- */
 /* --------------------------------------------- */
 static int counter_no_data = MAX_EMPTY_MESSAGE; //counter for empty messages, used for timeout
-
+static int counter_max_empty_msg = 100;
 // CONNECTION SECTION
 int init_connection(sockaddr_in &server_address, int port_number, int backlog) {
 	/*Init a non blocking connection and return the socket ID*/
@@ -14,11 +14,16 @@ int init_connection(sockaddr_in &server_address, int port_number, int backlog) {
 	server_address.sin_family = AF_INET;
     server_address.sin_addr.s_addr = htonl(INADDR_ANY);
     server_address.sin_port = htons(port_number);
+	
+	int flag = 1;  
+    setsockopt(server_id, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+	setsockopt(server_id, SOL_SOCKET, SO_REUSEPORT, &flag, sizeof(flag));
 	bind(server_id, (struct sockaddr *)&server_address, sizeof(server_address));  
 	
 	// https://www.cs.tau.ac.il/~eddiea/samples/Non-Blocking/tcp-nonblocking-server.c.html
     /* listen and change the socket into non-blocking state	*/
-	listen(server_id, backlog); 
+	int retval = listen(server_id, backlog); 
+	debug_print(DEBUG_CONNECTION, "listen server %d, returned %d\n",server_id, retval);
 	fcntl(server_id, F_SETFL, O_NONBLOCK);
 	
 	return server_id;
@@ -34,8 +39,9 @@ int accept_connection(int server_id) {
 		  exit(-2);
 		}
 	} else {
-		debug_print(DEBUG_CONNECTION, " [Connected] id=%d\n", connection_id);
+		debug_print(DEBUG_CONNECTION, " [Connected] Server_id=%d   Connection_id=%d\n", server_id, connection_id);
 	}
+	counter_no_data = MAX_EMPTY_MESSAGE; // reset the counter! this is important in case or restart of the connection
 	fflush(stdout);
 	return connection_id;
 }
@@ -49,7 +55,7 @@ bool reception_terminate(unsigned int rcvd_bytes[]) {
 			return true;
 		} else if ((rcvd_bytes[c] == 0) ) {
 			counter_no_data--;
-			if (counter_no_data==0) {
+			if (counter_no_data<=0) {
 				debug_print(DEBUG_CONNECTION, "timeout for income data %s\n" , ODAS_data_source_str[c]);
 				return true;
 			} 
@@ -61,4 +67,11 @@ bool reception_terminate(unsigned int rcvd_bytes[]) {
 	}
 	fflush(stdout);
 	return false;
+}
+
+int close_connection(int server_id) {
+	shutdown(server_id, SHUT_RDWR);
+	int retval = close(server_id);
+	debug_print(DEBUG_CONNECTION, "Close connection server %d, return value %d\n" , server_id, retval);
+	return retval;
 }
