@@ -2,7 +2,7 @@
 
 
 #include "common.h"
-#include "led_bus.h"
+//#include "led_bus.h"
 #include "connection.h"
 #include "json_decoder.h"
 #include "matrix_odas_receiver.h"
@@ -13,7 +13,7 @@
 /* --------------------------------------------- */
 static SSL_struct SSL_data;
 static SST_struct SST_data;
-static hal_leds_struct hw_led;
+//static hal_leds_struct hw_led;
 const int backlog = MAX_RECV_BACKLOG; // The number of message in queue in a recv
 
 /* ------------------------------- */
@@ -100,18 +100,18 @@ int main_loop() {
   int c; // a counter for cycles for 
   
 // Everloop Initialization
-  if (!hw_led.bus.Init()) return false;
-  hw_led.image1d = hal::EverloopImage(hw_led.bus.MatrixLeds());
-  hw_led.everloop.Setup(&hw_led.bus);
+//   if (!hw_led.bus.Init()) return false;
+//   hw_led.image1d = hal::EverloopImage(hw_led.bus.MatrixLeds());
+//   hw_led.everloop.Setup(&hw_led.bus);
 
-// Clear all LEDs
-  for (hal::LedValue &led : hw_led.image1d.leds) {
-    led.red = 0;
-    led.green = 0;
-    led.blue = 0;
-    led.white = 0;
-  }
-  hw_led.everloop.Write(&hw_led.image1d);
+// // Clear all LEDs
+//   for (hal::LedValue &led : hw_led.image1d.leds) {
+//     led.red = 0;
+//     led.green = 0;
+//     led.blue = 0;
+//     led.white = 0;
+//   }
+//   hw_led.everloop.Write(&hw_led.image1d);
 
 // INIT MESSAGES
   printf("(0x%X)SSL_data and (0x%X)SST_data", &SSL_data, &SST_data);
@@ -226,7 +226,7 @@ int main_loop() {
 		fflush(stdout);
 	  }
 	  // Finally, set all the pots with all complete data
-	  set_all_pots(&hw_led ,&SSL_data, &SST_data);
+	  //set_all_pots(&hw_led ,&SSL_data, &SST_data);
 	  if (DEBUG_INCOME_MSG) { printf("---------------------------------\nEND RECEPTION: %d\n---------------------------------\n\n", n_cycles);}
 	  n_cycles++;
   }
