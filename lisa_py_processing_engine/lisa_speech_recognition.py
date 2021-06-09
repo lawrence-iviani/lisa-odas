@@ -9,6 +9,10 @@ import logging
 from _collections import deque
 import os
 import deepspeech
+import datetime
+import wave
+import soundfile as sf
+import sounddevice as sd
 
 import speech_recognition as sr
 import speech_recognition.batch_recognizer as batch_sr
@@ -28,11 +32,11 @@ logger = logging.getLogger(name="LISA Speech Recognition")
 logger.setLevel(logging.DEBUG)
 
 # Specific Processing Parameters, should be configurable as parameters
-RECOGNITION_METHODS = ['sphinx', 'all' , 'google']
+RECOGNITION_METHODS = ['sphinx', 'all' , 'google', 'julius']
 AVAILABLE_LANGUAGES = ['en-US', 'it-IT', 'de-DE']
 
 # USED AS GLOBAL VAR
-RECOGNITION_METHOD = 'all'  # 'sphinx', 'all' , 'google'
+RECOGNITION_METHOD = 'julius'  # 'sphinx', 'all' , 'google'
 LANGUAGE = 'en-US'  # options: 'en-US' 'it-IT' 'de-DE'
 # TODO: wake up word
 
@@ -57,7 +61,7 @@ from copy import deepcopy
 @callback_SSL_func
 def callback_SSL(pSSL_struct):
     ssl_str = pSSL_struct[0]
-    print('callback_SSL')
+    #print('callback_SSL')
     # msg = ["+++ Python SSL Struct ts={}".format(ssl_str.timestamp)]
     # TODO: use timestamp for checking insertion??
     for i in range(0, MAX_ODAS_SOURCES):
@@ -85,7 +89,7 @@ def callback_SSL(pSSL_struct):
 
 @callback_SST_func
 def callback_SST(pSST_struct):
-    print('callback_SST')
+    # print('callback_SST')
     sst_str = pSST_struct[0]
     for i in range(0, MAX_ODAS_SOURCES):
         try:
@@ -107,7 +111,7 @@ def callback_SST(pSST_struct):
                     id.append(SST_queue[i][ii][1].z)
                 id = np.argmax(np.bincount(id))  # The more probable
                 SST_latest[i] = (ts, SST_src_struct(x=x,y=y,z=z,activity=activity, id=id, tag=SST_queue[i][-1][1].tag)) # For tag take the latest inserted
-            #print("SSL_latest[{}]: {}".format(i, SST_latest[i]))
+            # print("SST_latest[{}]: {}".format(i, SST_latest[i]))
 
         except Full:
             logger.warning("SST queue is Full, this should not happen with deque")
@@ -119,7 +123,7 @@ def callback_SSS_S(n_bytes, x):
     """"
     Called by the relative odas switcher stream, save in the proper SSS_queue[] the received data.
     """
-    print('callback_SSS_S')
+    # print('callback_SSS_S')
     # print("+++ Python SSS_S {} bytes in x={}".format(n_bytes, x))
     shp = (n_bytes // BYTES_PER_SAMPLE // MAX_ODAS_SOURCES, MAX_ODAS_SOURCES)
     n_frames = shp[0] // HOP_SIZE_INCOME_STREAM  # I assume shp[0] is always a multiple integer, which in my understanding seems to be the case with odas
@@ -135,7 +139,7 @@ def callback_SSS_S(n_bytes, x):
                     _ch_buf)  # eventually_ch_buf this has to be transformed in bytes or store as a byte IO?
             # manage fuell queue is requried?
         except Full:
-            logger.warning("SSS_S receiving Queue is Full, skipping frame (TODO: lost for now, change in deque!)")
+            # logger.warning("SSS_S receiving Queue is Full, skipping frame (TODO: lost for now, change in deque!)")
             # do nothing for now, perhaps extract the first to make space? Kind of circular queue behavior.....
             pass
 
@@ -156,6 +160,8 @@ def thread_start_odas_switcher():
 
 def recognize_worker(audio_queue, recognizer):
     # this runs in a background thread
+    print("test_recognize_thread working")
+
     worker_id = 0
     while True:
         worker_id += 1
@@ -163,6 +169,7 @@ def recognize_worker(audio_queue, recognizer):
         audio = audio_queue.get()  # retrieve the next audio processing job from the main thread
         if audio is None: break  # stop processing if the main thread is done
         # TODO: add a pause here?? Profiling?
+        print("test")
         logger.debug("{}- start recognize response in audio data, len is {}sec".format(actual_id,
                                                                                        len(audio.frame_data) / (
                                                                                                audio.sample_rate * audio.sample_width)))
@@ -185,17 +192,28 @@ def recognize_worker(audio_queue, recognizer):
                 logger.error("{}-Could not request results {} recognition service {}".format(actual_id, tag, e))
             except Exception as e:
                 logger.warning("Exception in _recognize{}-{}: {}".format(actual_id, tag, e))
-
-        if RECOGNITION_METHOD == 'google' or RECOGNITION_METHOD == 'all':  # 'sphinx', 'all'
+        print("hoge")
+        if RECOGNITION_METHOD == 'google':  # 'sphinx', 'all'
+            print("do google")
             google_thread = threading.Thread(target=_recognize,
                                              args=(audio, recognizer.recognize_google, 'google', actual_id, LANGUAGE))
             google_thread.daemon = True
             google_thread.start()
         if RECOGNITION_METHOD == 'sphinx' or RECOGNITION_METHOD == 'all':
+            print("do sphinx")
+            raw_data = audio.get_raw_data(convert_rate=16000, convert_width=2)  # the included language models require audio to be 16-bit mono 16 kHz in little-endian format
             sphinx_thread = threading.Thread(target=_recognize,
                                              args=(audio, recognizer.recognize_sphinx, 'sphinx', actual_id))
             sphinx_thread.daemon = True
             sphinx_thread.start()
+        if RECOGNITION_METHOD == 'julius' or RECOGNITION_METHOD == 'all':
+            print("do julius")
+            raw_data = audio.get_raw_data(convert_rate=16000, convert_width=2)  # the included language models require audio to be 16-bit mono 16 kHz in little-endian format
+            julius_thread = threading.Thread(target=_recognize,
+                                             args=(audio, recognizer.recognize_julius, 'julius', actual_id))
+            julius_thread.daemon = True
+            julius_thread.start()
+            
 
         audio_queue.task_done()  # mark the audio processing job as completed in the queue
 
@@ -247,6 +265,7 @@ def get_rt_model():
 
 
 def source_listening(source_id):
+    print("source_listening Part 1 ************",source_id)
     """"
     Listen to data from the callback queue (a queue populated by a callback in another thread), identify activity
     (this might be redundant because activity is identified by odas), and then recognize in a different thread
@@ -261,21 +280,32 @@ def source_listening(source_id):
     def _get_postion_message():
         return {"SST": SST_latest[source_id], "SSL":  SSL_latest[source_id]}
 
+    print("source_listening Part 2 ************",source_id)
     # The processing queue between a recognizer thread and received data identified as speech
     # This process is a sequetial  job with a long execution time , TODO: a possible check or maxlen could be added, for safety
-    if source_id > 0: return  # do nothignproperty
+    
+    ## [COMMENT]複数のソースから音声認識する際は2行コメントアウトする
+    # if source_id > 0:
+    #     return  # do nothignproperty
+    
+    print("source_listening Part 3 ************",source_id)
     if RT_SPEECH_PROCESSING:
         if source_id>0: return # do nothign
         sl_rt = batch_sr.SpeechListener_RT(aggressiveness=VAD_AGGRESSIVENESS)
         model, params_rt = get_rt_model()
+        print("source_listening Part 4 ************",source_id)
     else:
+        print("source_listening Part 5 ************",source_id)
         recognizer_queue = Queue()
         r = batch_sr.Recognizer(sphinx_language=LANGUAGE)
         sl = batch_sr.SpeechListener()
+        print("test_recognize_thread1")
         recognize_thread = threading.Thread(target=recognize_worker, args=(recognizer_queue, r,))
         recognize_thread.daemon = True
         recognize_thread.start()
-    
+        print("test_recognize_thread2")
+        print("source_listening Part 6 ************",source_id)
+
     print("Start odas")
     with inputs_sources.OdasRaw(audio_queue=SSS_queue[source_id], sample_rate=SAMPLE_RATE_INCOME_STREAM,
                         chunk_size=HOP_SIZE_INCOME_STREAM, nbits=N_BITS_INCOME_STREAM) as source:
@@ -307,10 +337,12 @@ def source_listening(source_id):
         else:
             while True:  # repeatedly listen for phrases and put the resulting audio on the audio processing job queue
                 # TODO SIGNAL THREADING FOR EXIT
+                print("please talk something in English!")
                 logger.info("\n*-*(source id {})*-* Start Listening ".format(source_id))
                 detected_audio_data = sl.detect_speech_activity(source, detection_callback=_get_postion_message)
                 detected_audio_data.add_metadata({"ODAS_source_ID": source_id})
                 logger.info("\n*-*(source id {})*-* Speech DETECTED {}".format(source_id, detected_audio_data))
+
                 if detected_audio_data:
                     # TODO: idea, here the speaker should be also identified
                     processed_audio_data = sl.process_speech(source, detected_audio_data, detection_callback=_get_postion_message)
@@ -337,10 +369,13 @@ if __name__ == '__main__':
     RECOGNITION_METHODS = args.recognition_method
 
     signal(SIGINT, handler)
+
+    # SST, SSL, SSSのコールバック(常に動いているやつ)
     lib_lisa_rcv.register_callback_SST(callback_SST)
     lib_lisa_rcv.register_callback_SSL(callback_SSL)
     lib_lisa_rcv.register_callback_SSS_S(callback_SSS_S)
 
+    # 4 sourceで待つ
     listener_threads = []
     for _n in range(MAX_ODAS_SOURCES):
         _th = threading.Thread(target=source_listening, args=(_n,))

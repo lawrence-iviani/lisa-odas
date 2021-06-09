@@ -5,6 +5,9 @@ from urllib.error import URLError, HTTPError
 
 import io
 import os
+import subprocess
+from subprocess import PIPE
+import signal
 import sys
 import audioop
 import collections
@@ -20,7 +23,10 @@ import time
 import uuid
 import logging
 
+import numpy as np
+import datetime
 import webrtcvad
+import wave
 
 from .audio_sources import AudioSource
 from .audio_data import AudioData
@@ -28,14 +34,14 @@ from .audio_data import AudioData
 from . import UnknownValueError, RequestError
 
 
-ENERGY_THRESHOLD = 300  # minimum audio energy to consider for recording
+ENERGY_THRESHOLD = 8000 #300  # minimum audio energy to consider for recording
 DYNAMIC_ENERGY_THRESHOLD = True
-DYNAMIC_ENERGY_ADJUSTMENT_DAMPING = 0.15
-DYNAMIC_ENERGY_RATIO = 1.5
-PAUSE_THRESHOLD = 0.8  # seconds of non-speaking audio before a phrase is considered complete
+DYNAMIC_ENERGY_ADJUSTMENT_DAMPING = 0.15 # 0.15
+DYNAMIC_ENERGY_RATIO = 1.5 #1.5
+PAUSE_THRESHOLD = 0.8 # 0.8  # seconds of non-speaking audio before a phrase is considered complete
 OPERATION_TIMEOUT = None  # seconds after an internal operation (e.g., an API request) starts before it times out, or ``None`` for no timeout
-PHRASE_THRESHOLD = 0.3  # minimum seconds of speaking audio before we consider the speaking audio a phrase - values below this are ignored (for filtering out clicks and pops)
-NON_SPEAKING_DURATION = 0.5  # seconds of non-speaking audio to keep on both sides of the recording
+PHRASE_THRESHOLD = 0.3  # 0.3 # minimum seconds of speaking audio before we consider the speaking audio a phrase - values below this are ignored (for filtering out clicks and pops)
+NON_SPEAKING_DURATION = 0.5  # 0.5 # seconds of non-speaking audio to keep on both sides of the recording
 
 
 def resample(data, input_rate, output_rate):
@@ -692,6 +698,7 @@ class SpeechListener(AudioSource):
         pause_count, phrase_count = 0, 0
         phrase_start_time = elapsed_time
         phrase_stop_time = phrase_start_time
+        print("speech_start")
         _tag_data("speech_start")
         self.logger.debug(
             "LISTEN: speech_start, metadata: {}".format(self._audio_metadata_to_str(_metadata_detected_dict)))
@@ -778,11 +785,11 @@ class Recognizer(AudioSource):
          Snowboy hotword configuration files (`*.pmdl` or `*.umdl` format).
         """
         # TODO: these should be configurable!
-        self.energy_threshold = 700  # 300  # minimum audio energy to consider for recording
+        self.energy_threshold = ENERGY_THRESHOLD  # 300  # minimum audio energy to consider for recording
         self.dynamic_energy_threshold = True
-        self.dynamic_energy_adjustment_damping = 0.15
-        self.dynamic_energy_ratio = 1.5
-        self.pause_threshold = 0.8  # seconds of non-speaking audio before a phrase is considered complete
+        self.dynamic_energy_adjustment_damping = DYNAMIC_ENERGY_ADJUSTMENT_DAMPING
+        self.dynamic_energy_ratio = DYNAMIC_ENERGY_RATIO
+        self.pause_threshold = PAUSE_THRESHOLD  # seconds of non-speaking audio before a phrase is considered complete
         self.operation_timeout = None  # seconds after an internal operation (e.g., an API request) starts before it times out, or ``None`` for no timeout
 
         self.phrase_threshold = 0.3  # minimum seconds of speaking audio before we consider the speaking audio a phrase - values below this are ignored (for filtering out clicks and pops)
@@ -928,12 +935,39 @@ class Recognizer(AudioSource):
 
         self._decoder = decoder
 
+    def recognize_julius(self, audio_data, show_all=False):
+        # write wav file
+        wav_data = audio_data.get_wav_data(convert_rate=16000, convert_width=2 )
+        now = datetime.datetime.now()
+        file_name_str = "records/" + now.strftime("%Y-%m-%d-%H-%M-%S") + ".wav"
+        file = wave.open(file_name_str , "wb") # open file
+        print("save:", file_name_str)
+        file.setnchannels(1)
+        file.setsampwidth(2)
+        file.setframerate(16000)
+        samplewidth = 2
+        frames = wav_data
+        file.writeframes(frames)
+        file.close() # close file
+
+        # write over filename to 
+        # file_name_str = 'records/a.wav'
+        cmd = 'echo /home/gisen/lib/lisa-odas/lisa_py_processing_engine/' + file_name_str + ' > /home/gisen/lib/lisa-odas/lisa_py_processing_engine/' + file_name_str + '.txt && cd /home/gisen/lib/dictation-kit-v4.4;./bin/linux/julius -C main.jconf -C am-dnn.jconf -dnnconf julius.dnnconf -filelist /home/gisen/lib/lisa-odas/lisa_py_processing_engine/'+  file_name_str + '.txt |grep sentence1: | cut -c 12-'
+        proc = subprocess.run(cmd, shell=True, stdout=PIPE, stderr=PIPE, text=True)
+        result_str = proc.stdout.replace( '\n' , '' )
+        
+        if result_str != " 。":
+            print(result_str)
+            return result_str
+
+
     def recognize_sphinx(self, audio_data, show_all=False):
         """
         Performs speech recognition on ``audio_data`` (an ``AudioData`` instance), using CMU Sphinx. Parameters are defined at the class init
         Returns the most likely transcription if ``show_all`` is false (the default). Otherwise, returns the Sphinx ``pocketsphinx.pocketsphinx.Decoder`` object resulting from the recognition.
         Raises a ``speech_recognition.UnknownValueError`` exception if the speech is unintelligible. Raises a ``speech_recognition.RequestError`` exception if there are any issues with the Sphinx installation.
         """
+        print("recognize_sphinx1")
         assert isinstance(audio_data, AudioData), "``audio_data`` must be audio data"
 
         # PROFILING
@@ -959,10 +993,11 @@ class Recognizer(AudioSource):
 
         # return results
         hypothesis = self._decoder.hyp()
-        self.logger.debug(
-            "[Exec in {}s]recognize_sphinx.decode. End. hypothesis.str={}".format(_tp.add_time('hypothesis'),
+        self.logger.info(
+            "[Exec in {}s]recognize_sphinx.decode. End. hypothesis.str=\n\n\n{}\n\n\n".format(_tp.add_time('hypothesis'),
                                                                                   hypothesis.hypstr if hypothesis is not None else "no transcriptions available"))
-        self.logger.debug(str(_tp))
+        print("tp")
+        self.logger.info(str(_tp))
         if hypothesis is not None: return hypothesis.hypstr
         raise UnknownValueError()  # no transcriptions available
 
