@@ -73,11 +73,11 @@ class OdasRaw(AudioSource):
             # buf_np = self.raw_queue.get()
             # print("get from queue  3 samples  {} ...".format(buf_np[0:3]))
             # buf = buf_np.tobytes() # buf is a numpyarray to bytes seems to work...
-            print("1")
+            #print("1")
             buf = self.raw_queue.get().tobytes()
-            print("2")
+            #print("2")
             self.raw_queue.task_done()  # sign the last job as done
-            print("3")
+            #print("3")
             return buf
 
         def close(self):
