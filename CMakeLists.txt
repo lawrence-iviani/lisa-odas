@@ -5,13 +5,15 @@ if(COMMAND cmake_policy)
   cmake_policy(SET CMP0003 NEW)
 endif(COMMAND cmake_policy)
 
+set(CMAKE_CXX_FLAGS "-std=c++11")
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PC_FFTW3 REQUIRED fftw3f)
 pkg_check_modules(PC_ALSA REQUIRED alsa)
 pkg_check_modules(PC_LIBCONFIG REQUIRED libconfig)
 pkg_search_module (PC_JSON-C REQUIRED json-c json)
 
-find_library(MATRIX_CREATOR_HAL matrix_creator_hal)
+#find_library(MATRIX_CREATOR_HAL matrix_creator_hal)
 
 include_directories("${PROJECT_SOURCE_DIR}/include")
 
@@ -226,7 +228,7 @@ target_link_libraries(odaslive
 add_library(lisarcv SHARED
 	demo/lisa-ODAS-receiver/matrix_odas_receiver.cpp 
 	demo/lisa-ODAS-receiver/connection.cpp 
-	demo/lisa-ODAS-receiver/led_bus.cpp 
+	#demo/lisa-ODAS-receiver/led_bus.cpp 
 	demo/lisa-ODAS-receiver/json_decoder.cpp 
 	demo/lisa-ODAS-receiver/python_wrapper.cpp 
 )
